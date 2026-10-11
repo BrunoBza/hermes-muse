@@ -104,8 +104,9 @@ class Runs:
                     if native and native["status"] not in {"running", "claimed"}:
                         row.update(status="partial", gaps=[native["error"] or "Native execution ended without a verified final result; resume unfinished stages."])
                         self.store.write("run", row["id"], row)
-        # Keep the latest attempt of every job visible even when other jobs run more frequently.
+        # A newly started attempt must not hide the preceding partial outcome it needs to resume.
         latest = {}
         for row in rows:
-            latest.setdefault(row["job"], row)
+            category = "active" if row["status"] in {"running", "ready"} else "ended"
+            latest.setdefault((row["job"], category), row)
         return list(latest.values())

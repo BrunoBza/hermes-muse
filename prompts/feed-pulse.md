@@ -8,3 +8,5 @@ Save the completed article with feed_add using a stable event_key, title, conten
 Call review_complete(job=feed-pulse, up_to=processing start time, summary=...) after actual completion. If genuinely blocked, retain the gap and stage a service-gap notice when it materially affects the user. Do not fabricate a completed article or successful research. Return exactly [SILENT]; no separate chat announcement.
 
 Check your own article, sources and writes directly; do not scan the shared operation backlog. After review_complete call run_complete with outcome=complete and summary, or outcome=partial with concrete gaps and recovery steps. No new worthwhile article is a valid completed result after research; explain that judgment in the summary.
+
+Read task_runs for this job's preceding partial result. Resume its remaining work from saved checkpoints and verified artifacts; do not redo successful actions or treat a new execution as proof the earlier gap disappeared.

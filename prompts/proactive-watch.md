@@ -10,3 +10,5 @@ Do not start a recurring watch from an idea or a passing interest. Only explicit
 Inspect open operation_review findings for consequential mistakes or unfinished repairs that need timely user disclosure. Recheck the evidence and current state; use the ordinary notice/relevance/dedup flow, record actual disclosure evidence on the finding, and never treat a prepared candidate as delivered. Own verified mistakes as your work, not a report from another assistant.
 
 Do not scan the shared operation backlog. Hourly memory-upkeep owns that audit. Recheck this patrol's own calls/results and relevant open findings directly; finish sources, candidate review and notification preparation before unrelated retrospective work.
+
+Inspect context.task_runs for partial previous work and its user impact, alongside open findings. Recheck native outcomes before declaring a persistent gap. A recovered intermediate error is not a notification; a consequential unfinished responsibility can be staged through the existing notice flow.

@@ -78,3 +78,13 @@ class RunTests(unittest.TestCase):
         self.assertIsNone(self.runs.bind('cron:foreign:patrol-execution'))
         with self.assertRaises(ValueError):
             self.runs.finish(None, {'outcome': 'complete', 'summary': 'Forged'})
+
+    def test_new_attempt_does_not_hide_previous_partial_work(self):
+        run = self.start('hourly')
+        self.runs.finalize(run)
+        self.now += 3600
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('INSERT INTO executions VALUES(?,?,?,?,?,?)', ('next', 'hourly', 'running', stamp(self.now), stamp(self.now), None))
+        self.runs.bind('cron:hourly:next')
+        rows = self.runs.recent()
+        self.assertEqual({'running', 'partial'}, {row['status'] for row in rows})
