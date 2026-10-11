@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.22
+
+- Mark off-schedule wakes as native manual runs so cron-expression repair does not silently discard quiet-time memory upkeep or Feed preference refreshes. Preserve recurring schedules and user-paused state.
+
 ## 0.1.21
 
 - Give operation-review pages independent receipts; preserve evidence during concurrent reads and merge repeated/overlapping completions without losing progress.

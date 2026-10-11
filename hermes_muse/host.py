@@ -187,7 +187,10 @@ class HermesHost:
             job_id = self.manifest()["fixed"].get(key)
             job = get_job(job_id) if job_id else None
             if job and job.get("enabled"):
-                update_job(job_id, {"next_run_at": stamp(time.time() + 1)})
+                at = stamp(time.time())
+                # Native due scans re-anchor off-schedule times unless marked as a manual fire.
+                # Preserve enabled/state here: a concurrent user pause must not be undone.
+                update_job(job_id, {"next_run_at": at, "manual_run_at": at})
                 return True
         return False
 

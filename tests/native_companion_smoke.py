@@ -30,6 +30,16 @@ def run(home):
 
     with profile_scope(home):
         runtime.host.initialize()
+        from cron.jobs import get_due_jobs, pause_job, resume_job
+        feed_id = runtime.host.manifest()["fixed"]["feed-pulse"]
+        feed_schedule = get_job(feed_id)["schedule"]
+        assert runtime.host.wake("feed-pulse")
+        assert feed_id in {j["id"] for j in get_due_jobs()}, "An off-tick wake must survive native cron-expression repair"
+        assert get_job(feed_id)["schedule"] == feed_schedule
+        pause_job(feed_id, reason="User paused the fixture")
+        assert not runtime.host.wake("feed-pulse")
+        assert not get_job(feed_id)["enabled"]
+        resume_job(feed_id)
         # Reviews persist summaries without manufacturing user activity or notices.
         for review in ("weekly-governance-review", "monthly-system-audit"):
             call("review_complete", job=review, up_to=now, summary="Evidence limited; simplify only after discussion.")
