@@ -6,3 +6,5 @@ Choose a coherent topic with actual incremental value and investigate it using a
 Save the completed article with feed_add using a stable event_key, title, content, original sources, why and relevant existing goal/interest IDs. It is available only after that succeeds. Changes to the brief affect future writing; do not rewrite old articles silently or treat reading as liking. An important finding may become a pending notice for the patrol, which rechecks its relevance; article publication itself is silent.
 
 Call review_complete(job=feed-pulse, up_to=processing start time, summary=...) after actual completion. If genuinely blocked, retain the gap and stage a service-gap notice when it materially affects the user. Do not fabricate a completed article or successful research. Return exactly [SILENT]; no separate chat announcement.
+
+Check your own article, sources and writes directly; do not scan the shared operation backlog. After review_complete call run_complete with outcome=complete and summary, or outcome=partial with concrete gaps and recovery steps. No new worthwhile article is a valid completed result after research; explain that judgment in the summary.

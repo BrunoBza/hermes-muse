@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from .handoff import render_result
 from .operations import Operations
+from .runs import Runs
 from .store import DAY, GOVERNANCE_JOBS, Store, bounded, digest, epoch, identifier, is_background_message, stamp
 
 DEFAULT_PREFERENCES = {"start_hour": 9, "end_hour": 22, "ordinary_per_day": None,
@@ -18,6 +19,7 @@ class Companion:
     def __init__(self, store, host, clock=time.time):
         self.store, self.host, self.clock = store, host, clock
         self.operations = Operations(store, host, clock)
+        self.runs = Runs(store, host, clock)
 
     def preferences(self):
         text = self.store.path("PROACTIVE_PREFERENCES.md").read_text(encoding="utf-8")
@@ -336,6 +338,7 @@ class Companion:
                 "research": [{"id": b["id"], "goal_id": b.get("goal_id"), "mode": b.get("mode", "legacy"),
                               "created": b["created"]} for b in sorted(self.store.all("research"), key=lambda x: x["created"], reverse=True)[:20]],
                 "operation_review": self.operations.summary() if view != "feed-pulse" else None,
+                "task_runs": self.runs.recent(),
                 "notifications": live,
                 "notification_history": history,
                 "feed": self.feed_list({})[:15]}
@@ -358,10 +361,10 @@ class Companion:
             remaining = [r for r in pending if max(old, up_to) < r["created"] <= through] if job in {"memory-upkeep", "nightly-review"} else []
             self.store.put(db, "cursor", job, max(old, up_to))
             self.store.put(db, "meta", "last_review:" + job, {"at": now, "summary": bounded(data["summary"], 2000),
-                                                           "complete": not remaining, "remaining": len(remaining)})
+                                                           "complete": not remaining, "scope": "checkpoint", "job_complete": False, "remaining": len(remaining)})
         return {"job": job, "processed_through": stamp(max(old, up_to)), "through": stamp(through),
-                "complete": not remaining, "remaining": len(remaining), "next_user_signals": self.signal_batch(remaining),
-                "instruction": "Process next_user_signals now and call review_complete again with the same through; do not finish this run yet." if remaining else "This snapshot is complete."}
+                "complete": not remaining, "scope": "checkpoint", "job_complete": False, "remaining": len(remaining), "next_user_signals": self.signal_batch(remaining),
+                "instruction": "Process next_user_signals now and call review_complete again with the same through; do not finish this run yet." if remaining else "This checkpoint is complete, not the whole task. Finish required artifacts/operation review, then call run_complete in the owned Cron."}
 
     def source_check(self, data):
         """Stable source identity and explicit coverage, independent of scan dates/prose."""

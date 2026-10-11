@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.21
+
+- Give operation-review pages independent receipts; preserve evidence during concurrent reads and merge repeated/overlapping completions without losing progress.
+- Keep failed tool reads visible while excluding successful Skill/tool-discovery boilerplate from historical audits.
+- Assign the shared operation audit to hourly upkeep. Patrol and Feed verify their own work; nightly review writes confirmed alignment without waiting for the backlog.
+- Track actual task stages and partial completion separately from native Cron exit status. Require hourly audit completion and fresh nightly artifacts before recording full completion; preserve recovery checkpoints.
+- Keep the same six fixed jobs, schedule, source coverage, models and delivery controls.
+
 ## 0.1.20
 
 - Teach the existing communication/goals procedures to consider a request’s practical consequences, carry notification/failure/exit rules into actual work, and verify changes before confirming.

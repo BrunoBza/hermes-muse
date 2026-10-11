@@ -8,3 +8,5 @@ Give the user a clear assessment with concrete evidence and worthwhile recommend
 Do not apply edits to SOUL, system configuration, memory, skills, user files or Cron jobs. Save a concise summary up to 2000 characters with review_complete(job=monthly-system-audit, up_to=review start time, summary=...). Return the full report for native Bot Chat delivery as internal findings to explain directly to the user. Do not enqueue another notification, announce receipt, or repeat it through another channel. No new user authorization is created by this report.
 
 Read operation_review findings and use the self-review procedure for focused evidence when needed. Check recurring mistakes, verified repairs and unresolved user impact; proposals remain proposals. Do not claim a full operation audit from a job status or invent errors to populate this review.
+
+Use focused native evidence and existing findings, not another full operation-backlog scan. After saving review_complete, call run_complete with outcome=complete and summary, or outcome=partial with specific gaps and recovery steps, before returning the report.

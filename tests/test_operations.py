@@ -52,6 +52,7 @@ class OperationTests(unittest.TestCase):
             self.call(sid=sid)
         page = self.ops.read({})
         self.assertEqual({'cron_owned_1', 'child'}, {e['session_id'] for e in page['events']})
+        self.finish(page)
         self.ops.track('rotated', 'cron:owned:execution1')
         self.session('rotated')
         self.call(sid='rotated')
@@ -79,8 +80,7 @@ class OperationTests(unittest.TestCase):
         self.assertTrue(completed["more"])
         # The live model confused a page endpoint with the snapshot endpoint; reject that shortcut.
         self.assertFalse(self.ops.read({"through": first["up_to"]})["available"])
-        with self.assertRaises(ValueError):
-            self.finish(first)
+        self.assertTrue(self.finish(first)["already_reviewed"])
         second = self.ops.read({})
         self.assertEqual(3, len(second['events']))
         self.assertFalse(second['more'])
@@ -111,6 +111,37 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(2, len(page['events']))
         self.assertNotIn('SELF REVIEW OUTPUT', json.dumps(page))
         self.assertIn('watch_create', json.dumps(page))
+
+    def test_overlapping_receipts_preserve_evidence_and_monotonic_progress(self):
+        for n in range(103):
+            self.call(str(n))
+        first = self.ops.read({})
+        self.now += 1
+        concurrent = Operations(self.store, self.host, lambda: self.now).read({})
+        self.assertNotEqual(first['token'], concurrent['token'])
+        self.finish(concurrent)
+        tail = self.ops.read({})
+        self.finish(tail)
+        self.call('new-pass')
+        new = self.ops.read({})
+        # An older reviewer can save a finding after other reviewers advanced.
+        finding = self.ops.finding({'evidence': [first['events'][0]['ref']], 'summary': 'Actual error', 'impact': 'Needs repair'})
+        self.assertEqual(first['events'][0]['ref'], finding['evidence'][0])
+        repeated = self.finish(first)
+        self.assertTrue(repeated['more'])
+        self.assertEqual(tail['up_to'], repeated['checkpoint']['message_id'])
+        self.assertEqual(new['through'], repeated['through'])
+        self.finish(new)
+        self.assertEqual(new['up_to'], self.ops.checkpoint()['message_id'])
+
+    def test_failed_reads_remain_visible_but_successful_skill_reads_do_not(self):
+        self.call('skill', name='skill_view', args={'name': 'hermes-muse:companion'})
+        self.message(role='tool', text='{"success":true,"content":"long skill"}', call_id='skill')
+        self.call('bad-skill', name='skill_view', args={'name': 'missing'})
+        failure = self.message(role='tool', text='{"success":false,"error":"missing skill"}', call_id='bad-skill')
+        page = self.ops.read({})
+        self.assertEqual([failure], [e['id'] for e in page['events']])
+        self.assertEqual('skill_view', page['events'][0]['related_call']['call']['function']['name'])
 
     def test_failed_read_and_missing_ledger_never_advance(self):
         self.call()

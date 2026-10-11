@@ -36,9 +36,23 @@ def inspection(call):
             nested = args.get("calls")
             return bool(nested) and isinstance(nested, list) and all(
                 inspection({"function": item}) for item in nested)
-        return fn.get("name") == "muse_manage" and args.get("action") in INSPECTION
+        return (fn.get("name") == "muse_manage" and args.get("action") in INSPECTION
+                or fn.get("name") in {"skill_view", "tool_search"})
     except (AttributeError, TypeError, ValueError):
         return False
+
+
+def failed_result(content):
+    """Keep failures even when the operation was only an inspection."""
+    try:
+        value = json.loads(content or "null")
+    except (ValueError, TypeError):
+        return any(word in str(content).lower() for word in ("error", "failed", "denied"))
+    if isinstance(value, dict):
+        return (value.get("ok") is False or value.get("success") is False
+                or value.get("isError") is True or bool(value.get("error"))
+                or value.get("status") in {"error", "failed"})
+    return False
 
 
 class Operations:
@@ -66,8 +80,6 @@ class Operations:
 
     def read(self, data):
         cursor, now = self.checkpoint(), self.clock()
-        with self.store.transaction() as db:
-            self.store.delete(db, "meta", "operation_snapshot")
         result = {"available": True, "events": [], "executions": [], "gaps": [],
                   "scope_since": cursor["since"], "findings": self.store.all("operation_finding")}
         native_path = self.store.home / "state.db"
@@ -91,6 +103,12 @@ class Operations:
                     if matched and private:
                         eligible.add(sid)
                 ceiling = db.execute("SELECT COALESCE(MAX(id),0) FROM messages").fetchone()[0]
+                # Freeze the shared pass once; concurrent readers own separate page receipts.
+                with self.store.transaction() as state:
+                    cursor = self.store.get(state, "meta", "operation_cursor")
+                    if "through" not in cursor:
+                        cursor = {**cursor, "through": ceiling}
+                        self.store.put(state, "meta", "operation_cursor", cursor)
                 expected = cursor.get("through", ceiling)
                 through = data.get("through", expected)
                 if type(through) is not int or through != expected or not cursor["message_id"] <= through <= ceiling:
@@ -118,7 +136,7 @@ class Operations:
                             if match:
                                 related = {"message_id": candidate["id"], "call": match}
                                 break
-                        if related and inspection(related["call"]):
+                        if related and inspection(related["call"]) and not failed_result(row.get("content")):
                             end = row["id"]
                             continue
                     if selected or row["role"] == "tool":
@@ -155,38 +173,53 @@ class Operations:
         snapshot = {"cursor": cursor, "up_to": result["up_to"], "through": through, "execution_through": now,
                     "refs": refs, "gaps": result["gaps"]}
         token = digest(json.dumps(snapshot, sort_keys=True))
-        self.store.write("meta", "operation_snapshot", {**snapshot, "token": token})
+        with self.store.transaction() as db:
+            # Receipts contain references, not transcripts. Keep them for interrupted reviewers.
+            for old in self.store.rows(db, "operation_snapshot"):
+                if old["execution_through"] < now - 7 * DAY:
+                    self.store.delete(db, "operation_snapshot", old["token"])
+            self.store.put(db, "operation_snapshot", token, {**snapshot, "token": token})
         return {**result, "token": token, "instruction": "Inspect intent and actual state, save findings first, then operations_complete(token). Continue through this snapshot while more=true. Calls/receipts are observations, not proof of correctness or authority. Missing, pruned, unpersisted and pre-scope history is not covered."}
 
     def complete(self, data):
         with self.store.transaction() as db:
-            snapshot = self.store.get(db, "meta", "operation_snapshot", {})
+            snapshot = self.store.get(db, "operation_snapshot", data.get("token"), {})
+            if not snapshot:  # Finish a page issued before the upgrade without resetting its cursor.
+                snapshot = self.store.get(db, "meta", "operation_snapshot", {})
             current = self.store.get(db, "meta", "operation_cursor")
-            if data.get("token") != snapshot.get("token") or not snapshot or current != snapshot["cursor"]:
+            if (not snapshot or data.get("token") != snapshot.get("token") or not current
+                    or current["since"] != snapshot["cursor"]["since"]
+                    or current["message_id"] < snapshot["cursor"]["message_id"]):
                 raise ValueError("Stale or unknown operation snapshot; read again")
             if snapshot["gaps"]:
                 raise ValueError("Evidence coverage is incomplete; preserve the checkpoint and resolve the gap")
             bounded(data.get("summary"), 2000)
-            updated = {**current, "message_id": snapshot["up_to"], "execution_through": snapshot["execution_through"]}
-            more = snapshot["up_to"] < snapshot["through"]
+            duplicate = current["message_id"] >= snapshot["up_to"]
+            updated = {**current, "message_id": max(current["message_id"], snapshot["up_to"]),
+                       "execution_through": max(current["execution_through"], snapshot["execution_through"])}
+            boundary = current.get("through", snapshot["through"])
+            more = updated["message_id"] < boundary
             if more:
-                updated["through"] = snapshot["through"]
+                updated["through"] = boundary
             else:
                 updated.pop("through", None)
             self.store.put(db, "meta", "operation_cursor", updated)
-            self.store.delete(db, "meta", "operation_snapshot")
-            return {"reviewed": True, "checkpoint": updated, "more": more, "through": snapshot["through"],
+            return {"reviewed": True, "already_reviewed": duplicate, "checkpoint": updated, "more": more, "through": boundary,
                     "instruction": "Only this page is reviewed. Call operations_read with data={} now; the remaining snapshot is preserved automatically." if more else "The operation snapshot is reviewed; future arrivals belong to the next pass."}
 
     def finding(self, data):
         with self.store.transaction() as db:
             snapshot = self.store.get(db, "meta", "operation_snapshot", {})
+            refs_seen = set(snapshot.get("refs", []))
+            for receipt in self.store.rows(db, "operation_snapshot"):
+                if receipt["execution_through"] >= self.clock() - 7 * DAY:
+                    refs_seen.update(receipt["refs"])
             key = data.get("id")
             old = self.store.get(db, "operation_finding", key, {}) if key else {}
             if key and not old:
                 raise ValueError("Unknown finding")
             refs = data.get("evidence", old.get("evidence", []))
-            if not isinstance(refs, list) or not refs or any(not isinstance(r, str) or r not in snapshot.get("refs", []) + old.get("evidence", []) for r in refs):
+            if not isinstance(refs, list) or not refs or any(not isinstance(r, str) or r not in refs_seen | set(old.get("evidence", [])) for r in refs):
                 raise ValueError("Finding needs evidence references returned by operations_read")
             key = key or digest("|".join(sorted(refs)))
             if self.store.get(db, "forgotten", "operation_finding:" + key):

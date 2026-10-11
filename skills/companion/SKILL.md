@@ -1,7 +1,7 @@
 ---
 name: companion
 description: Manage goals and expiring interests, proactive reminders, feedback, memory and relationships, nightly alignment, silent Feed and bounded parallel research using the current Hermes profile.
-version: 0.1.20
+version: 0.1.21
 ---
 
 # Companion
@@ -46,3 +46,6 @@ Main conversation owns explicit user goals, preferences and feedback; incrementa
 A promise is open until its actual result reaches the user or the user cancels it. A candidate saved, a final response prepared and a native delivery completed are different events. Preserve unknown delivery outcomes and do not repeat irreversible actions. Research/Feed never extend interests themselves. Use original user signal IDs; do not manufacture them from old summaries or cron prompts. Installation grants no new external service authority.
 
 `review_complete`: data `{job, up_to, summary, through?}`. Store a concise summary (up to 2000 characters); the full report can be longer in native output or an artifact. Job is one of proactive-watch, memory-upkeep, nightly-review, feed-pulse, weekly-governance-review, monthly-system-audit. `up_to` is a timezone-aware ISO timestamp or numeric epoch; for hourly/nightly signal batches use the last successfully processed signal's created value, or processing start time if that batch is empty. Their cursors are independent. Inspect source_checks for per-source coverage; a job cursor does not mark failed sources as checked. Advance only after every dependent write succeeds; a partial batch advances only through its contiguous successful prefix.
+
+
+`review_complete` advances a processing checkpoint only. Its `complete` field describes that snapshot, not the whole job. In an owned Cron, finish with `run_complete` data `{outcome:"complete"|"partial", summary, gaps?:["unfinished work; recovery step"]}`. The host binds it to the actual execution; never invent an execution ID. Complete requires this run's review checkpoint, plus a completed operation snapshot for memory-upkeep or newly written dream/alignment files for nightly review. Signal handling, operation audit, artifacts and notification output are tracked separately. `context.task_runs` reports actual work status independently of native Cron exit status. Partial results preserve useful completed work and all recovery checkpoints; assess consequential service gaps through the existing notification flow. For patrols call run_complete before final notification_prepare; notification preparation/output is separate from transport delivery. Native tool receipts and explicit completion establish recorded progress, not a guarantee that the model's judgment was correct.

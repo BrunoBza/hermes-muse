@@ -119,6 +119,13 @@ def run(home):
         execution = create_execution(patrol_id, source="test")
         mark_execution_running(execution["id"])
         task_id = "cron:" + patrol_id + ":" + execution["id"]
+        runtime.pre_turn(session_id="patrol-session", turn_id="patrol-turn", platform="cron", task_id=task_id)
+        for action, data in [
+            ("review_complete", {"job": "proactive-watch", "up_to": now, "summary": "Verified the source and candidate"}),
+            ("run_complete", {"outcome": "complete", "summary": "Ready for final notice preparation"}),
+        ]:
+            outcome = json.loads(runtime.handle({"action": action, "data": data}, task_id=task_id, session_id="patrol-session"))
+            assert outcome["ok"], outcome
         prepared = json.loads(runtime.handle({"action": "notification_prepare", "data": {"id": notice["id"]}},
                                              task_id=task_id, session_id="patrol-session"))["result"]
         assert len(list_jobs(True)) == before, "Preparing a notice must not create a delivery Cron"
@@ -127,10 +134,19 @@ def run(home):
         assert payload.startswith("[Hermes Muse internal delivery]") and "A bicycle is available." in payload
         assert "[Hermes Muse notification " in payload and "The user is the audience" in payload
         assert runtime.transform_output("Status: dispatching", session_id="patrol-session") == payload
+        assert runtime.store.read("run", execution["id"])["status"] == "complete"
         finish_execution(execution["id"], success=True, delivery_outcome="delivered")
         runtime.host.reconcile()
         assert runtime.store.read("notification", notice["id"])["status"] == "sent"
         assert runtime.host.current_delivery(task_id) is None, "A finished run cannot prepare another notice"
+        hourly_id = runtime.host.manifest()["fixed"]["memory-upkeep"]
+        interrupted = create_execution(hourly_id, source="test")
+        mark_execution_running(interrupted["id"])
+        runtime.pre_turn(session_id="interrupted-session", turn_id="interrupted-turn", platform="cron",
+                         task_id="cron:" + hourly_id + ":" + interrupted["id"])
+        finish_execution(interrupted["id"], success=True, delivery_outcome="suppressed")
+        actual = {r["id"]: r for r in runtime.service.runs.recent()}
+        assert actual[interrupted["id"]]["status"] == "partial", "Native success cannot prove task completion"
         tokens = set_session_vars(session_id="bot-session", chat_type="private", cron_session="")
         try:
             count = len(runtime.store.all("signal"))

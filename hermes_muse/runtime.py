@@ -15,7 +15,7 @@ from .store import GOVERNANCE_JOBS, PLUGIN, Store, is_background_message, stamp
 log = logging.getLogger(__name__)
 ACTIONS = ("context", "status", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
-           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "watch_create", "watch_stop", "research_start", "research_status", "operations_read", "operations_complete", "finding_record", "forget")
+           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "research_start", "research_status", "operations_read", "operations_complete", "finding_record", "forget")
 SCHEMA = {"name": "muse_manage", "description": "Manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
 
@@ -46,6 +46,7 @@ class Runtime:
         self.service = Companion(self.store, self.host)
         self.timers = {}
         self.delivery_turns = {}
+        self.run_turns = {}
         self.lock = threading.RLock()
         self.closed = False
 
@@ -67,6 +68,10 @@ class Runtime:
                 raise ValueError("A delegated child may read Muse context but must return proposed changes to its parent")
             with profile_scope(self.home):
                 self.service.operations.track(kwargs.get("session_id"), kwargs.get("task_id"))
+                run = self.service.runs.bind(kwargs.get("task_id"))
+                if run and kwargs.get("session_id"):
+                    with self.lock:
+                        self.run_turns[kwargs["session_id"]] = run
                 delivery = self.host.current_delivery(kwargs.get("task_id"))
                 if delivery and kwargs.get("session_id"):
                     with self.lock:
@@ -85,6 +90,15 @@ class Runtime:
                 elif action in {"operations_read", "operations_complete", "finding_record"}:
                     method = {"operations_read": "read", "operations_complete": "complete", "finding_record": "finding"}[action]
                     result = getattr(self.service.operations, method)(data)
+                    if action == "operations_complete":
+                        self.service.runs.stage(run, "operations", {"complete": not result["more"], "checkpoint": result["checkpoint"]})
+                elif action == "run_complete":
+                    result = self.service.runs.finish(run, data)
+                elif action == "review_complete":
+                    if run and data.get("job") != run["job"]:
+                        raise ValueError("Review checkpoint must belong to this Cron job")
+                    result = self.service.review_complete(data)
+                    self.service.runs.stage(run, "review", {"complete": result["complete"], "through": result["through"], "summary": data["summary"]})
                 elif action == "preferences":
                     result = self.service.preference_update(data)
                 elif action == "watch_create":
@@ -114,18 +128,30 @@ class Runtime:
     def transform_output(self, response_text="", session_id="", **kwargs):
         with self.lock:
             delivery = self.delivery_turns.pop(session_id, None)
-        if self.closed or not delivery:
+            run = self.run_turns.pop(session_id, None)
+        if self.closed:
             return None
         with profile_scope(self.home):
-            if delivery.get("kind") == "report":
-                return render_result(response_text, delivery["route"]["deliver"])
-            return self.service.finalize_delivery(delivery)
+            result = None
+            if delivery:
+                result = (render_result(response_text, delivery["route"]["deliver"])
+                          if delivery.get("kind") == "report" else self.service.finalize_delivery(delivery))
+            if run:
+                self.service.runs.finalize(run, notifications=bool(delivery))
+            return result
 
     def handoff(self, key):
         return self.service.notification_queue({"id": key})
 
     def pre_turn(self, session_id="", turn_id="", user_message="", platform="", parent_session_id="", **kwargs):
         info = session_info()
+        if not self.closed and not parent_session_id and private_session(info) and str(kwargs.get("task_id", "")).startswith("cron:"):
+            with profile_scope(self.home):
+                run = self.service.runs.bind(kwargs.get("task_id"))
+                if run:
+                    with self.lock:
+                        self.run_turns[session_id] = run
+                    self.service.operations.track(session_id, kwargs.get("task_id"))
         if self.closed or parent_session_id or info["cron"] or platform in {"cron", "delegate", "subagent", "webhook", "msgraph_webhook", "kanban"} or not private_session(info):
             return None
         text = user_message if isinstance(user_message, str) else json.dumps(user_message, ensure_ascii=False)
@@ -189,6 +215,7 @@ class Runtime:
     def end_turn(self, session_id="", turn_id="", **kwargs):
         with self.lock:
             self.delivery_turns.pop(session_id, None)
+            self.run_turns.pop(session_id, None)
         # Failed/interrupted turns must also release the local attention hold.
         with self.store.transaction() as db:
             row = self.store.get(db, "session", session_id)
@@ -203,6 +230,7 @@ class Runtime:
                 timer.cancel()
             self.timers.clear()
             self.delivery_turns.clear()
+            self.run_turns.clear()
 
 
 def register(ctx, *, plugin_root=ROOT):
