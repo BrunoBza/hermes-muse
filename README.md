@@ -87,6 +87,8 @@ User-signal hooks process private and local conversations, skipping groups, Cron
 
 The plugin does not pin a model or provider on its recurring jobs. Hermes resolves the model at each run: **per-job model → current profile’s `cron.model` → profile’s main model**. Without a Cron default, hourly background work can use the same expensive model as your main conversation. Set a background model before leaving the scheduler running.
 
+Muse Cron instructions use the plugin’s delegation entry for parallel work. Children launched there, including research workers, inherit the running parent’s model and connection: a Luna Cron launches Luna workers; changing the Cron model changes them too. Ordinary chat keeps the profile’s `delegation` settings. Hermes still controls child reasoning effort, permissions and execution limits. A direct native `delegate_task` call bypasses this routing rule.
+
 For example, merge this into the current profile’s `config.yaml`, using a model and provider available in your installation (`llm` here is a configured provider name):
 
 ```yaml

@@ -109,6 +109,21 @@ class ResearchTests(unittest.TestCase):
             native_start(self.store, self.ctx, {"items": ["a"]})
         self.assertEqual(self.store.all("research"), [])
 
+    def test_cron_research_joins_parent_model_workers_with_no_nested_coordinator(self):
+        config = types.ModuleType("tools.delegate_tool_config")
+        config._get_max_concurrent_children = lambda: 2
+        with patch.dict(sys.modules, {"tools.delegate_tool_config": config}), patch(
+                "hermes_muse.delegation.dispatch", return_value={"results": [{"status": "completed"}]}) as dispatch:
+            result = native_start(self.store, self.ctx, {"items": ["a", "b", "c", "d", "a"]}, owned_cron=True)
+        self.assertTrue(dispatch.call_args.kwargs["owned_cron"])
+        tasks = dispatch.call_args.args[1]["tasks"]
+        self.assertEqual(2, len(tasks))
+        self.assertIn("1. a\n2. c", tasks[0]["goal"])
+        self.assertIn("1. b\n2. d", tasks[1]["goal"])
+        self.assertIn("assigned questions directly", tasks[0]["goal"])
+        self.assertEqual(4, result["total"])
+        self.assertIn("joined", result["instruction"])
+
     def test_dedup_bounded_waves_and_coverage(self):
         batch = start(self.store, self.ctx, {"items": ["a", "b", "c", "d", "e", "a"]})
         self.assertEqual(batch["total"], 5)

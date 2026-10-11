@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.24
+
+- Route Muse Cron worker creation through a plugin entry that inherits the actual parent model and connection; keep ordinary conversation delegation settings unchanged.
+- Use the same entry for parallel self-review and direct research workers, joining results within the Cron run. Preserve native reasoning, permission and execution limits.
+- Update the existing Skill and prompts; no new Cron jobs, profile configuration changes or state migration.
+
 ## 0.1.23
 
 - Batch self-review into disjoint assignments for native parallel workers, keeping raw evidence out of the parent conversation.

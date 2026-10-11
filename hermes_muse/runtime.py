@@ -16,7 +16,7 @@ from .store import GOVERNANCE_JOBS, PLUGIN, Store, is_background_message, stamp
 log = logging.getLogger(__name__)
 ACTIONS = ("context", "status", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
-           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
+           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
 SCHEMA = {"name": "muse_manage", "description": "Manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
 
@@ -120,9 +120,13 @@ class Runtime:
                     result = self.host.watch(data)
                 elif action == "watch_stop":
                     result = self.host.stop_watch(data["job_id"])
+                elif action == "delegate":
+                    from .delegation import dispatch
+                    result = dispatch(self.ctx, data, owned_cron=bool(run or delivery))
                 elif action in {"research_start", "research_status"}:
                     from .research import start, poll
-                    result = (start if action == "research_start" else poll)(self.store, self.ctx, data)
+                    result = (start(self.store, self.ctx, data, owned_cron=bool(run or delivery))
+                              if action == "research_start" else poll(self.store, self.ctx, data))
                 elif action in {"notification_prepare", "notification_queue", "notification_handoff"}:
                     result = self.service.notification_queue(data, delivery if delivery and delivery.get("kind") != "report" else None)
                 else:

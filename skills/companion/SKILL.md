@@ -1,7 +1,7 @@
 ---
 name: companion
 description: Manage goals and expiring interests, proactive reminders, feedback, memory and relationships, nightly alignment, silent Feed and bounded parallel research using the current Hermes profile.
-version: 0.1.23
+version: 0.1.24
 ---
 
 # Companion
@@ -50,4 +50,4 @@ A promise is open until its actual result reaches the user or the user cancels i
 
 `review_complete` advances a processing checkpoint only. Its `complete` field describes that snapshot, not the whole job. In an owned Cron, finish with `run_complete` data `{outcome:"complete"|"partial", summary, gaps?:["unfinished work; recovery step"]}`. The host binds it to the actual execution; never invent an execution ID. Complete requires this run's review checkpoint, plus a completed operation snapshot for memory-upkeep or newly written dream/alignment files for nightly review. Signal handling, operation audit, artifacts and notification output are tracked separately. `context.task_runs` reports actual work status independently of native Cron exit status. Partial results preserve useful completed work and all recovery checkpoints; assess consequential service gaps through the existing notification flow. For patrols call run_complete before final notification_prepare; notification preparation/output is separate from transport delivery. Native tool receipts and explicit completion establish recorded progress, not a guarantee that the model's judgment was correct.
 
-Hourly self-review uses operations_batch → native parallel delegates → findings and operations_commit. Child agents may call operations_evidence for assigned native references, but cannot advance the checkpoint or mutate Muse state. Full evidence stays available without filling the parent conversation with raw pages. See self-review for partial completion and recovery.
+Hourly self-review uses operations_batch → muse_manage delegate → native parallel workers → findings and operations_commit. Child agents may call operations_evidence for assigned native references, but cannot advance the checkpoint or mutate Muse state. Full evidence stays available without filling the parent conversation with raw pages. See self-review for partial completion and recovery.

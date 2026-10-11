@@ -1,14 +1,13 @@
 """Native delegated research, with legacy lifecycle batches retained for inspection."""
 from __future__ import annotations
 
-import json
 import time
 import uuid
 
 from .store import bounded
 
 
-def start(store, ctx, data):
+def start(store, ctx, data, *, owned_cron=False):
     items = data.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= 24:
         raise ValueError("Research needs 1–24 independent read-only questions")
@@ -36,14 +35,26 @@ def start(store, ctx, data):
                       + " before work and between batches; stop if its owner closes or research expires. " if goal else "")
                    + str(data.get("context", ""))[:8000],
     }
-    result = json.loads(ctx.dispatch_tool("delegate_task", request, parent_agent=parent))
+    if owned_cron:
+        # Keep fan-out in the owner: a nested native spawn would read global routing again.
+        from tools.delegate_tool_config import _get_max_concurrent_children
+        workers = min(3, len(unique), _get_max_concurrent_children())
+        groups = [unique[n::workers] for n in range(workers)]
+        instructions = request["goal"].split("\n", 1)[0].replace(
+            "Use at most three concurrent workers if native nesting is available, otherwise work sequentially.",
+            "Work through your assigned questions directly; return results to the parent for any further delegation.")
+        request = {"tasks": [{"goal": instructions + "\n" + "\n".join(
+            f"{n+1}. {q}" for n, q in enumerate(group)), "context": request["context"]} for group in groups]}
+    from .delegation import dispatch
+    result = dispatch(ctx, request, owned_cron=owned_cron)
     if result.get("status") not in {"dispatched", "completed"} and "results" not in result:
         raise ValueError("Native research dispatch failed: " + str(result)[:2000])
     batch = {"id": key, "mode": "native", "goal_id": data.get("goal_id"), "created": time.time(),
              "total": len(unique), "dispatch": result}
     store.write("research", key, batch)
     return {"id": key, "total": len(unique), "native": result,
-            "instruction": "Native Hermes owns the full batch and returns its result to the parent. Continue the conversation; do not poll to advance work. Save evidence and handle final delivery when the callback arrives."}
+            "instruction": ("Native Hermes joined the research workers. Inspect all results and coverage gaps, save evidence and handle any appropriate notice; launch alone is not completion."
+                            if owned_cron else "Native Hermes owns the full batch and returns its result to the parent. Continue the conversation; do not poll to advance work. Save evidence and handle final delivery when the callback arrives.")}
 
 
 def poll(store, ctx, data):

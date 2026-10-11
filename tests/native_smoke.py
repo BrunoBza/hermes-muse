@@ -106,6 +106,36 @@ def main():
                 patrol = runtime.host.manifest()["fixed"]["proactive-watch"]
                 attempt = create_execution(patrol, source="test")
                 mark_execution_running(attempt["id"])
+                # Real runtime ownership decides routing, never model-provided data.
+                from tools.delegate_tool_config import _resolve_child_runtime, _resolve_delegation_credentials
+                parent.model, parent.provider = "fixture-luna", "custom"
+                parent.requested_provider, parent.base_url = "fixture-provider", "https://fixture.invalid/v1"
+                parent.api_mode, parent.api_key = "chat_completions", "fixture-not-a-secret"
+                with bind_subagent_parent(parent), patch("tools.delegate_tool.delegate_task", autospec=True,
+                        return_value=json.dumps({"results": [{"status": "completed"}]})) as dispatch:
+                    owned = json.loads(entry.handler({"action": "delegate", "data": {"goal": "Inspect fixture evidence"}},
+                        task_id="cron:" + patrol + ":" + attempt["id"]))
+                    assert owned["ok"], owned
+                    assert dispatch.call_args.kwargs["credentials_cfg"] == {}
+                    assert dispatch.call_args.kwargs["background"] is False
+                    for model in ("fixture-luna", "fixture-next-model"):
+                        parent.model = model
+                        creds = _resolve_delegation_credentials(dispatch.call_args.kwargs["credentials_cfg"], parent)
+                        child = _resolve_child_runtime(parent, {"model": "fixture-sol", "reasoning_effort": "medium"},
+                            parent.api_key, model=creds["model"], override_provider=creds["provider"],
+                            override_base_url=creds["base_url"], override_api_key=creds["api_key"],
+                            override_api_mode=creds["api_mode"], override_acp_command=creds.get("acp_command"),
+                            override_acp_args=creds.get("acp_args"), routing_cfg={})
+                        assert child["model"] == model, child
+                        assert child["base_url"] == parent.base_url and child["api_key"] == parent.api_key
+                        assert child["requested_provider"] == parent.requested_provider
+                    ordinary = json.loads(entry.handler({"action": "delegate", "data": {"goal": "Read fixture"}},
+                        task_id="cron:unrelated:unknown"))
+                    assert ordinary["ok"], ordinary
+                    assert "credentials_cfg" not in dispatch.call_args.kwargs
+                    assert dispatch.call_args.kwargs["background"] is True
+                    forged = json.loads(entry.handler({"action": "delegate", "data": {"goal": "x", "owned_cron": True}}))
+                    assert not forged["ok"], forged
                 prepared = json.loads(entry.handler({"action": "notification_prepare", "data": {"id": notice["id"]}},
                     task_id="cron:" + patrol + ":" + attempt["id"], session_id="native-patrol"))["result"]
                 agent = SimpleNamespace(session_id="native-patrol", model="test", platform="cron")
