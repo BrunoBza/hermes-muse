@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.23
+
+- Batch self-review into disjoint assignments for native parallel workers, keeping raw evidence out of the parent conversation.
+- Add scoped evidence indexes and full chunked expansion; retain original intent and linked call results.
+- Commit numeric batch/slot results using server-held receipts, advance only contiguous reviewed work, and resume unfinished assignments after interruption.
+- Save partial progress before the host iteration budget is exhausted; keep model choice, source coverage and six fixed schedules unchanged.
+
 ## 0.1.22
 
 - Mark off-schedule wakes as native manual runs so cron-expression repair does not silently discard quiet-time memory upkeep or Feed preference refreshes. Preserve recurring schedules and user-paused state.

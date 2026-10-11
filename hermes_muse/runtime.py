@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .handoff import MARKER, receiving_instructions, render_result
+from .audit import Audit
 from .host import HermesHost, JOBS, ROOT, profile_scope
 from .service import Companion
 from .store import GOVERNANCE_JOBS, PLUGIN, Store, is_background_message, stamp
@@ -15,7 +16,7 @@ from .store import GOVERNANCE_JOBS, PLUGIN, Store, is_background_message, stamp
 log = logging.getLogger(__name__)
 ACTIONS = ("context", "status", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
-           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "research_start", "research_status", "operations_read", "operations_complete", "finding_record", "forget")
+           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
 SCHEMA = {"name": "muse_manage", "description": "Manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
 
@@ -64,7 +65,7 @@ class Runtime:
             if action not in ACTIONS:
                 raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
-            if is_delegated_child_context() and action not in {"context", "status", "feed_list"}:
+            if is_delegated_child_context() and action not in {"context", "status", "feed_list", "operations_evidence"}:
                 raise ValueError("A delegated child may read Muse context but must return proposed changes to its parent")
             with profile_scope(self.home):
                 self.service.operations.track(kwargs.get("session_id"), kwargs.get("task_id"))
@@ -87,6 +88,20 @@ class Runtime:
                         result["installation"] = self.host.manifest()
                         result["reviews"] = {job: self.store.read("meta", "last_review:" + job)
                                              for job in GOVERNANCE_JOBS}
+                elif action in {"operations_batch", "operations_commit"}:
+                    audit = Audit(self.service.operations)
+                    from agent.subagent_lifecycle import get_active_subagent_parent
+                    parent = get_active_subagent_parent()
+                    remaining = getattr(getattr(parent, "iteration_budget", None), "remaining", None)
+                    if action == "operations_batch" and isinstance(remaining, int) and remaining < 8:
+                        result = {"available": True, "deferred": True, "assignments": [],
+                                  "instruction": "The host has fewer than eight tool iterations left. Save findings and run_complete(partial) with the audit continuation, then finish normally. Do not launch another worker wave; the next hourly run resumes saved work."}
+                    else:
+                        result = audit.batch() if action == "operations_batch" else audit.commit(data)
+                    if "checkpoint" in result and "more" in result:
+                        self.service.runs.stage(run, "operations", {"complete": not result["more"], "checkpoint": result["checkpoint"]})
+                elif action == "operations_evidence":
+                    result = self.service.operations.evidence(data)
                 elif action in {"operations_read", "operations_complete", "finding_record"}:
                     method = {"operations_read": "read", "operations_complete": "complete", "finding_record": "finding"}[action]
                     result = getattr(self.service.operations, method)(data)

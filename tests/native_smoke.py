@@ -174,6 +174,19 @@ def main():
                     assert {"native-history", "audit-child"} <= {e["session_id"] for e in audit["events"]}, audit
                     assert any(e.get("related_call", {}).get("call", {}).get("id") == "native-write" for e in audit["events"])
                     assert all(e["session_id"] != "group-history" for e in audit["events"])
+                    wave = json.loads(entry.handler({"action": "operations_batch"}))["result"]
+                    receipt = runtime.store.read("meta", "operation_wave")["pages"][0]["receipt"]
+                    from agent.delegation_context import delegated_child_context
+                    with delegated_child_context("audit-worker"):
+                        evidence = json.loads(entry.handler({"action": "operations_evidence", "data": {"receipt": receipt}}))
+                        assert evidence["ok"] and evidence["result"]["events"], evidence
+                        forbidden = json.loads(entry.handler({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Must return to parent"}]}}))
+                        assert not forbidden["ok"], "Audit workers cannot advance parent state"
+                    committed = json.loads(entry.handler({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Parent verified native evidence and worker findings"}]}}))
+                    assert committed["ok"] and not committed["result"]["more"], committed
+                    with patch("agent.subagent_lifecycle.get_active_subagent_parent", return_value=SimpleNamespace(iteration_budget=SimpleNamespace(remaining=3))):
+                        deferred = json.loads(entry.handler({"action": "operations_batch"}))["result"]
+                        assert deferred["deferred"] and not deferred["assignments"]
                     runtime.service.operations.complete({"token": audit["token"], "summary": "Native read-only operation evidence verified"})
                     history = read_conversation(home, "native-history", time.time() - 86400)
                     assert history["available"], history

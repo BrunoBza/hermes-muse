@@ -10,7 +10,7 @@ from hermes_muse.operations import Operations
 from hermes_muse.store import Store, stamp
 
 
-class OperationTests(unittest.TestCase):
+class OperationFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -45,6 +45,8 @@ class OperationTests(unittest.TestCase):
     def finish(self, page):
         return self.ops.complete({'token': page['token'], 'summary': 'Compared actual intent, receipts and state; saved relevant findings.'})
 
+
+class OperationTests(OperationFixture):
     def test_scopes_owned_silent_cron_children_and_excludes_groups_unrelated(self):
         for sid, parent, kind in [('cron_owned_1', None, 'private'), ('child', 'cron_owned_1', 'private'),
                                   ('group', 'main', 'group'), ('group-child', 'group', 'private'), ('other', None, 'private')]:

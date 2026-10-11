@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from .store import DAY, bounded, digest, epoch
 
 GROUPS = {"group", "supergroup", "channel", "guild", "room"}
-INSPECTION = {"context", "status", "operations_read", "operations_complete", "finding_record"}
+INSPECTION = {"context", "status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record"}
 
 
 @contextmanager
@@ -37,7 +37,7 @@ def inspection(call):
             return bool(nested) and isinstance(nested, list) and all(
                 inspection({"function": item}) for item in nested)
         return (fn.get("name") == "muse_manage" and args.get("action") in INSPECTION
-                or fn.get("name") in {"skill_view", "tool_search"})
+                or fn.get("name") in {"skill_view", "tool_search", "tool_describe"})
     except (AttributeError, TypeError, ValueError):
         return False
 
@@ -53,6 +53,13 @@ def failed_result(content):
                 or value.get("isError") is True or bool(value.get("error"))
                 or value.get("status") in {"error", "failed"})
     return False
+
+
+def preview(event):
+    """An index, never a replacement for source evidence. Full bodies stay in native history."""
+    text = json.dumps(event, ensure_ascii=False)
+    return {"ref": event["ref"], "session_id": event.get("session_id"), "role": event.get("role"),
+            "chars": len(text), "excerpt": text[:1200], "truncated": len(text) > 1200}
 
 
 class Operations:
@@ -78,10 +85,10 @@ class Operations:
                 "findings": self.store.all("operation_finding"),
                 "instruction": "Use operations_read for native tool evidence; no operation audit is implied by a conversation/signal cursor."}
 
-    def read(self, data):
+    def read(self, data, *, page_cursor=None, compact=False):
         cursor, now = self.checkpoint(), self.clock()
         result = {"available": True, "events": [], "executions": [], "gaps": [],
-                  "scope_since": cursor["since"], "findings": self.store.all("operation_finding")}
+                  "scope_since": cursor["since"], "findings": [] if compact else self.store.all("operation_finding")}
         native_path = self.store.home / "state.db"
         if not native_path.exists():
             return {**result, "available": False, "gaps": ["Native session database is unavailable; no audit checkpoint advanced."]}
@@ -109,6 +116,8 @@ class Operations:
                     if "through" not in cursor:
                         cursor = {**cursor, "through": ceiling}
                         self.store.put(state, "meta", "operation_cursor", cursor)
+                if page_cursor is not None:
+                    cursor = page_cursor
                 expected = cursor.get("through", ceiling)
                 through = data.get("through", expected)
                 if type(through) is not int or through != expected or not cursor["message_id"] <= through <= ceiling:
@@ -146,6 +155,8 @@ class Operations:
                             event["content"] = None
                         if related:
                             event["related_call"] = related
+                        if compact:
+                            event = preview(event)
                         size = len(json.dumps(event, ensure_ascii=False))
                         if result["events"] and (len(result["events"]) >= 100 or page_chars + size > 64000):
                             break
@@ -206,6 +217,63 @@ class Operations:
             self.store.put(db, "meta", "operation_cursor", updated)
             return {"reviewed": True, "already_reviewed": duplicate, "checkpoint": updated, "more": more, "through": boundary,
                     "instruction": "Only this page is reviewed. Call operations_read with data={} now; the remaining snapshot is preserved automatically." if more else "The operation snapshot is reviewed; future arrivals belong to the next pass."}
+
+    def evidence(self, data):
+        """Read only references issued to an audit page, without copying a transcript to plugin state."""
+        token = data.get("receipt")
+        snapshot = self.store.read("operation_snapshot", token, {})
+        if not snapshot or snapshot["execution_through"] < self.clock() - 7 * DAY:
+            raise ValueError("Audit page expired or unknown; ask the parent to reread its batch")
+        ref = data.get("ref")
+        if ref is not None and ref not in snapshot["refs"]:
+            raise ValueError("Evidence must belong to the assigned audit receipt")
+        events, missing = [], []
+        with reader(self.store.home / "state.db") as db:
+            for item in snapshot["refs"]:
+                if not item.startswith("message:") or ref is not None and item != ref:
+                    continue
+                row = db.execute("SELECT id,session_id,role,content,tool_calls,tool_call_id,tool_name,timestamp FROM messages WHERE id=?", (int(item.split(":")[1]),)).fetchone()
+                if row is None:
+                    missing.append(item)
+                    continue
+                row = dict(row)
+                row["ref"] = item
+                row["tool_calls"] = [c for c in calls(row) if not inspection(c)]
+                if row["role"] == "assistant":
+                    row["content"] = None  # Never expose reasoning from tool-bearing assistant rows.
+                if row.get("tool_call_id"):
+                    for candidate in db.execute("SELECT id,tool_calls FROM messages WHERE session_id=? AND id<? AND instr(tool_calls,?)>0 ORDER BY id DESC", (row["session_id"], row["id"], row["tool_call_id"])):
+                        match = next((c for c in calls(dict(candidate)) if c.get("id") == row["tool_call_id"]), None)
+                        if match:
+                            row["related_call"] = {"message_id": candidate["id"], "call": match}
+                            break
+                # Context for a page boundary: original turn text is evidence, not new authority.
+                user = db.execute("SELECT id,content FROM messages WHERE session_id=? AND id<? AND role='user' ORDER BY id DESC LIMIT 1", (row["session_id"], row["id"])).fetchone()
+                if user:
+                    row["user_context"] = dict(user)
+                events.append(row)
+        executions = []
+        ledger = self.store.home / "cron/executions.db"
+        execution_refs = [r for r in snapshot["refs"] if r.startswith("execution:") and (ref is None or r == ref)]
+        if execution_refs and ledger.exists():
+            with reader(ledger) as db:
+                for item in execution_refs:
+                    row = db.execute("SELECT * FROM executions WHERE id=?", (item.split(":", 1)[1],)).fetchone()
+                    if row:
+                        executions.append({"ref": item, **dict(row)})
+                    else:
+                        missing.append(item)
+        elif execution_refs:
+            missing.extend(execution_refs)
+        if ref is None:
+            return {"events": [preview(e) for e in events], "executions": executions, "missing": missing,
+                    "instruction": "This is an evidence index. Expand truncated entries needed to verify intent, effects, failures or promises via the same receipt and ref. Group related calls/results; harmless known read-only inspections need no body replay. Never call a preview a full evidence review."}
+        text = json.dumps((events + executions)[0], ensure_ascii=False) if events or executions else ""
+        offset, length = data.get("offset", 0), data.get("length", 12000)
+        if type(offset) is not int or offset < 0 or type(length) is not int or not 1 <= length <= 24000:
+            raise ValueError("Use a nonnegative offset and length 1..24000")
+        return {"ref": ref, "text": text[offset:offset + length], "offset": offset,
+                "next_offset": offset + length if offset + length < len(text) else None, "total_chars": len(text), "missing": missing}
 
     def finding(self, data):
         with self.store.transaction() as db:
