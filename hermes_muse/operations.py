@@ -58,7 +58,10 @@ def failed_result(content):
 def preview(event):
     """An index, never a replacement for source evidence. Full bodies stay in native history."""
     text = json.dumps(event, ensure_ascii=False)
+    linked = event.get("related_call", {}).get("call")
+    action = linked or event.get("tool_calls") or []
     return {"ref": event["ref"], "session_id": event.get("session_id"), "role": event.get("role"),
+            "tool_name": event.get("tool_name"), "call_preview": json.dumps(action, ensure_ascii=False)[:1200],
             "chars": len(text), "excerpt": text[:1200], "truncated": len(text) > 1200}
 
 
