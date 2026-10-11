@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.25
+
+- Have receiving conversations retrieve original source details when an incomplete handoff prevents a useful judgment, with truthful access failures and unchanged external-write authority.
+- Preserve actionable source identities, timestamps and locators in prepared findings.
+- Add a provider-neutral briefing procedure for user-subscribed native reports, sharing Muse source and communication rules without adding a fixed Cron or silently adopting existing jobs.
+
 ## 0.1.24
 
 - Route Muse Cron worker creation through a plugin entry that inherits the actual parent model and connection; keep ordinary conversation delegation settings unchanged.

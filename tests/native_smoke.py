@@ -80,6 +80,8 @@ def main():
                 assert str(homes[1 - index] / "muse") not in rendered
                 skill = skill_view("hermes-muse:companion")
                 assert "Goal" in str(skill) or "goal" in str(skill), str(skill)
+                briefing = skill_view("hermes-muse:companion", file_path="references/briefings.md")
+                assert (PROJECT / "skills/companion/references/briefings.md").read_text().strip() in json.loads(briefing)["content"]
                 entry = registry.get_entry("muse_manage")
                 assert entry, "Plugin tool absent"
                 status = json.loads(entry.handler({"action": "context"}))
