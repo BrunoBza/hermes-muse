@@ -98,7 +98,7 @@ agent:
     gpt-6-luna: high
 ```
 
-推理级别依次取任务的 `reasoning_effort`、该模型的 override、全局 `agent.reasoning_effort`；已测试的 Hermes 版本不支持 `cron.reasoning_effort`。上例会将该 profile 中 Luna 的推理设为 `high`，也适用于使用 Luna 的普通会话。任务已有的单独模型和推理设置优先，插件重载时会保留。Cron 默认配置在下次运行时读取。Bot Chat 接收结果后使用自己的会话模型再处理一轮，仍会产生模型调用；`cron.model` 不控制这一轮的模型。插件安装不会替用户写入上述模型配置。
+推理级别依次取任务的 `reasoning_effort`、该模型的 override、全局 `agent.reasoning_effort`；已测试的 Hermes 版本不支持 `cron.reasoning_effort`。上例会将该 profile 中 Luna 的推理设为 `high`，也适用于使用 Luna 的普通会话。任务已有的单独模型和推理设置优先，插件重载时会保留。Cron 默认配置在下次运行时读取。Bot Chat 接收结果后使用自己的会话模型再处理一轮，仍会产生模型调用；`cron.model` 不控制这一轮的模型。并行自查的子代理也沿用 Hermes 的委派模型配置（如 `delegation.model`），不会被 `cron.model` 强制覆盖。插件安装不会替用户写入上述模型配置。
 
 频率使用 Hermes 当前时区。有明确截止时间的监控会在到期后停止。用户明确要求的定时提醒和专项监控可以产生额外 Cron，均记录到安装清单；六个是固定任务数量。巡查直接投递本轮筛选后的消息，不另建投递 Cron；暂缓的候选记录阻塞原因和最早可发时间，留到下一轮巡查重新核实；这个时间不是精确投递承诺。普通和时效性事项遵守免打扰时段，确有紧急风险时可凭新证据重新分级，用户延后和禁提设置仍然有效。投递结果按该次执行的持久回执核对，后续巡查不会覆盖此前的送达依据。
 
