@@ -133,6 +133,7 @@ $HERMES_HOME/
 ├── muse/
 │   ├── install.json                # 任务 ID 和文件归属
 │   ├── install.lock
+│   ├── audit.lock                  # 自查批次分配锁
 │   ├── state.db                    # 来源检查、处理进度、兴趣、提醒、Feed、研究、自查问题
 │   ├── AGENTS.md
 │   ├── TOOLS.md                    # 已确认的连接、设备和使用限制

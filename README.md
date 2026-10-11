@@ -133,6 +133,7 @@ $HERMES_HOME/
 ├── muse/
 │   ├── install.json                # job IDs and owned files
 │   ├── install.lock
+│   ├── audit.lock                  # Audit assignment lock
 │   ├── state.db                    # source checks, cursors, interests, notices, Feed, research, findings
 │   ├── AGENTS.md
 │   ├── TOOLS.md                    # confirmed connections, devices and limits
