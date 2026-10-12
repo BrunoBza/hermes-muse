@@ -1,0 +1,72 @@
+# Calendar views and advance preparation
+
+Use this procedure for an on-demand future-month/30-day calendar, a natural-month calendar, calendar portions of a requested briefing, and every proactive patrol. Use only already enabled and authorized connections/accounts. Apple, Google and other calendars are peers: discover all available calendar tools/CLI integrations and their accounts, then enumerate all calendar resources and every inventory page. TOOLS.md is a tested recipe, not a whitelist. Check permission/status before protected reads; never install/authorize a connector, widen scope, write an event or create a watch to obtain coverage. Missing or opted-out sources stay explicitly unavailable. Discovery must not scan mail or private unrelated data.
+
+## Window and source identity
+
+Call `muse_manage calendar_window` with `{mode:"rolling"}` (default) for “future month”, “next month” when used as a rolling overview, or “next/future 30 days”. If the user explicitly means the next named calendar month, resolve that request before querying; do not silently reinterpret it. “This month” uses `{mode:"month"}`. The helper uses native Hermes's active profile timezone, including DST when an IANA zone is available. If Hermes supplies only a fixed offset (for example CST), the helper preserves its actual name and utc_offset_seconds with timezone_kind=fixed and a timezone_note that DST transitions are unavailable. Never guess an IANA zone from an abbreviation or silently fall back to UTC; display that limitation. It returns an unchanged query object with start, end, timezone, bounds, observed_at and source_resource. All intervals are half-open `[start,end)`: include events overlapping the interval, including ongoing events that began before start; exclude an event ending exactly at start or beginning exactly at end.
+
+Rolling means now through the same local wall time 30 calendar days later, continuously across midnight/month/year boundaries. It is not 30 UTC 24-hour blocks. DST gaps at the ending wall time move forward by the gap; ambiguous ending times use the first occurrence. Natural month means local midnight on the first through local midnight on the next first, including the elapsed part of this month. Print these boundaries and the profile timezone in the answer. Refresh the window for a new run, not halfway through pagination.
+
+Use the returned `source_resource` as the stable source identity's resource: `calendars:rolling-30d` or `calendars:natural-month`. These checkpoints are independent from each other and from legacy `calendars:all` seven-day coverage. Never reuse/alias a legacy or different-window source_id, cursor or baseline. Connection and account remain their actual exact IDs; dates belong in query scope, never in source identity. Reuse only that same mode's context.source_checks source_id and verified connection aliases. A new window scope starts without assuming earlier seven-day/month coverage succeeded.
+
+## Reads and assembly
+
+Read the full overlap interval for every discovered calendar, completing every continuation page. Translate the helper's boundaries to the documented connector query without weakening overlap coverage. Use native expanded-instance queries: recurring masters alone are insufficient. Include single-instance moves/exceptions, cancellations and multi-day/cross-midnight events. If the connector cannot supply those semantics, record that calendar partial with the specific limitation. A changed-items cursor may supplement the interval read; it cannot replace revisiting still-upcoming events across all 30 days.
+
+Call `muse_manage calendar_view` with `{window:<unchanged calendar_window result>, discovery_complete:<boolean>, sources:[...]}`. It performs no connector calls and saves no events, notices or checkpoints. Normalize actual connector receipts into this contract; never invent success, IDs, dates or pagination evidence:
+
+```json
+{
+  "source": {"connection":"actual-tool", "account":"actual-account", "resource":"calendars:rolling-30d"},
+  "title": "Original source/account title",
+  "inventory": {"pages":[{
+    "status":"checked", "observed_at":"2026-10-12T12:00:01+08:00",
+    "items":[{"id":"work", "title":"Original calendar title", "timezone":"Asia/Shanghai"}],
+    "request_token":null, "next_token":null
+  }]},
+  "calendars":[{
+    "resource_id":"work", "window":"REPLACE with the full unchanged query object",
+    "pages":[{
+      "status":"checked", "observed_at":"2026-10-12T12:00:02+08:00",
+      "items":[{
+        "id":"upstream-instance-id", "title":"Literal event title",
+        "start":"2026-10-20T09:00:00+08:00", "end":"2026-10-20T10:00:00+08:00",
+        "timezone":"Asia/Shanghai", "all_day":false, "recurring":false,
+        "uid":"provider UID if actually supplied", "status":"confirmed",
+        "locator":"original source link if supplied",
+        "preparation":{"reason":"Verified booking lead time", "due":"2026-10-13"}
+      }],
+      "request_token":null, "next_token":null
+    }]
+  }]
+}
+```
+
+Every source includes the same mode's `source_id` when already recorded; optional alias_reason/cursor retain the existing source_check contract. Page observation times fall between window.observed_at and this assembly call. First request_token is null; each subsequent request_token matches the previous next_token; the final next_token is null. Include failed pages with status partial/error/unavailable and error text, or leave the unread continuation visible. Inventory failure may use `{status:"unavailable",error:"specific cause",pages:[]}`. A successful empty result requires a successful page with items `[]`; no page is a gap. Incomplete inventory prevents success even if all known calendars succeeded. Include disconnected/unauthorized discovered sources, not just successful ones. If all sources are absent, say none are connected; this does not establish free time.
+
+Events require id, literal title, start/end, explicit all_day and recurring booleans. Timed start/end require RFC3339 offsets; preserve the source timezone as well as the profile conversion. All-day start/end are original `YYYY-MM-DD` dates with exclusive end and original calendar timezone (event override when supplied). Calendar/event timezone objects may also explicitly provide timezone_kind=fixed and utc_offset_seconds; ambiguous abbreviations alone are insufficient. Display `all_day_dates` prominently as the original calendar dates, then optionally explain profile-date overlays; never replace a source date with the neighboring date produced by timezone conversion. All-day observances are not timed conflicts by default. Normalize provider transparency/declined attendance into `busy:false`; explicit all-day blocking may use `busy:true`. Preserve status, notes needed for judgment, locator and other relevant original fields without importing unnecessary private payloads.
+
+Recurring instances require `recurring:true` and `occurrence_id` containing the original RECURRENCE-ID/original occurrence start, even when moved. Cancelled instances retain that identity and `status:"cancelled"`; they remain in evidence but not daily busy schedules or preparation candidates. Missing instance details or unsupported master expansion are partial coverage, never made-up dates.
+
+Dedup is deliberately conservative: only identical payloads (apart from native copy ID) with the same connection/account/calendar, UID or native ID, and occurrence identity merge. A series UID never merges different occurrences. Conflicting versions retain both and make that calendar partial until an original read resolves them. Matching title/time never establishes identity. Cross-calendar or cross-connector copies remain separate even with the same UID; this helper has no verified provenance-alias resolver. Mention possible copies when material rather than suppressing distinct commitments. Notice issue dedup still follows the existing proactivity rules and must not equate distinct source events by title/time.
+
+The result retains events with full original fields/provenance, source coverage and page observation times; days contain ordered event indexes, busy indexes and overlapping busy pairs. The same event can appear on several profile dates. `availability:"observed_busy_only"` never claims global free time, even after complete authorized coverage. Identify busy dates, important overlaps and useful preparation without dropping events to fit an arbitrary row limit; paginate the user-facing view when necessary. Show cancelled exceptions and material gaps separately. Never call a partial or unavailable result an empty calendar/all-clear.
+
+Each coverage entry returns proposed `source_check` arguments including query_window and observed_at. After original reads and dependent evidence/candidate writes succeed, submit these through the existing action, preserving partial/error/unavailable status. Successful resources and page completeness are distinct from connection discovery. Source checks retain successful scope/resources/window/observation and cursor independently of failed attempts; older in-flight runs cannot overwrite newer starts. Returned arguments validate reported receipts, not provider truth. Do not advance a checkpoint merely because a model generated a schedule.
+
+## Apple PIM observed-instance adaptation
+
+Apple PIM 3.18.0 exposes EventKit interval-query results with UTC `startDate/endDate`, device-local `localStart/localEnd` (`yyyy-MM-dd h:mm a`), `isAllDay`, native `id`, `calendarId`, and optional recurrence rules. It does not expose source timezone, original all-day date, original recurrence identity, exception/cancellation status, stable provider account ID or availability. These missing guarantees require partial coverage, but do not justify discarding valid observed schedules.
+
+For this connector only, set source `receipt_format:"apple-pim"` and `device_timezone:{timezone:"<verified connector-host IANA zone>"}` (or an explicit fixed timezone object). Supply actual raw calendar objects in inventory page items and raw event objects in calendar page items; retain the ordinary page statuses, observation timestamps, resource IDs and unchanged window. Obtain the device zone from the host performing the read; never assume it equals the Hermes profile or invent an IANA zone from an abbreviation. Use the existing official runner and permission route; this adapter is pure receipt transformation and introduces no connector fork.
+
+Assembly validates local strings against UTC in that device zone. It retains raw event fields under `event.original`, calendar/source provenance and UTC start/end. Rows expose `display_all_day_dates` with `basis:"device-display"` and explicit device timezone, separate from source `all_day_dates` which remain absent. Display these dates labelled as device dates, and explain profile-date overlays when different. No source timezone or original all-day date is inferred. Recurrence rules are preserved; `recurrence_basis:"not-reported"` means absence of a rule does not prove a single nonrecurring event. `status:"observed"` is not confirmed attendance. Unknown availability produces `busy:false` plus `busy_basis:"unavailable"`; do not interpret the empty busy list as no conflicts. Optional `preparation:{reason:...}` on a raw event is a Muse judgment annotation supported by actual event details and user context, not an EventKit property; the ordinary preparation candidate flow applies without creating an automatic alert.
+
+For Apple observations only, exact native ID plus observed start/end distinguishes expanded instances within this snapshot. This is not an original occurrence ID and cannot reconcile moved/cancelled instances across reads. Identical observations merge; distinct intervals remain separate even with the same native ID. Source status always remains partial with capability gaps, including for empty results; successfully queried resources are still listed in checked_resources. No successful checkpoint/cursor advances. Invalid observations downgrade their page and retain valid neighbors. If a query reaches the connector's limit with no continuation, mark that page partial; never claim complete enumeration. A read below the limit supports current query coverage only, not cancellation history. Continue using the strict normalized contract for connectors that actually supply its fields.
+
+## Existing patrol, longer horizon
+
+On every existing patrol use `context.calendar_window` or calendar_window rolling and read the full next 30 days, including days 8–30. Review every returned event for advance preparation supported by its details and actual user context: booking/visa/travel lead time, documents or materials, deadlines and multi-day arrangements. Relevant later events do not require a saved goal. Mark preparation with a factual reason and useful action window; do not infer action from the title alone or automatically flag every distant appointment. On-demand views may show these reasons without sending notices.
+
+A 30-day read is not a 30-day broadcast. For actual candidates use the unchanged notification_add/refresh/review/prepare flow, original source_snapshot, verified substantive revisions and preparation timing. Recheck cancellations/moves/completion against the original source and recent conversations; retire stale pending candidates. Notify when preparation changes a useful decision now, not daily because the same distant event remains in view. Quiet hours, frequency ceilings, one strongest ordinary item, snoozes, expiry, dedup and delivery receipts remain binding. Nothing selected means silence. Keep the existing 30-minute patrol schedule, six fixed jobs and explicit watch policy; do not create per-event Cron/watch jobs, subscribe to another feed or check more often.

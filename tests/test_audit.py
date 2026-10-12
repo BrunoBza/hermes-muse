@@ -6,6 +6,12 @@ from test_operations import OperationFixture
 
 
 class AuditTests(OperationFixture):
+    def setUp(self):
+        super().setUp()
+        from unittest.mock import patch
+        routing = patch('hermes_muse.delegation.settings', return_value={})
+        routing.start(); self.addCleanup(routing.stop)
+
     def test_parallel_slots_are_disjoint_and_out_of_order_results_cannot_skip(self):
         for n in range(130):
             self.call(str(n), args={'path': str(n), 'body': 'x' * 6000})

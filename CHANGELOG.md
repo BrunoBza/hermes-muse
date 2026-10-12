@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.27 catalog compatibility
+
+Precise soft-inbox retention and instructed-read-only disclosures; Cron watch scheduling policy and explicit 4,000-character fields; native 30-minute default without changing explicit cadences. Conversation previews gain complete revision-checked chunk retrieval and range coverage that gates notices without advancing processing watermarks. Research/audit respect lower user concurrency while retaining every question/page. Public Cron delegation is used for compatible unpinned routes; pinned/unknown parent-routing exceptions remain explicitly unresolved. Includes the previously local 0.1.26 follow-through and calendar/Apple work, without deploying existing installations.
+
+
+## 0.1.26
+
+- Automatically retain real-turn review candidates and inject bounded due references through the native user-message hook; candidates never grant execution authority.
+- Persist accepted-goal native dispatch intent before launch, observe exact receipts, recover a missing handle from a bounded native journal read, and reject unknown relaunches.
+- Reuse the six Cron pre-run outputs for recovery/verification/handoff without changing cadence, source sweeps or calendar coverage.
+- Separate owner execution, business verification and native notice delivery; add current, concrete user-handoff guidance in communication.
+- Preserve legacy goals, user overlays, notification rules, profiles, native identity/memory and prompt-cache history.
+
 ## 0.1.25
 
 - Have receiving conversations retrieve original source details when an incomplete handoff prevents a useful judgment, with truthful access failures and unchanged external-write authority.

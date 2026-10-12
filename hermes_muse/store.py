@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.1.25"
+VERSION = "0.1.27"
 PLUGIN = "hermes-muse"
 DAY = 86400
 GOVERNANCE_JOBS = ("weekly-governance-review", "monthly-system-audit")
@@ -50,7 +50,7 @@ def bounded(value, limit=8000):
 
 def is_background_message(text):
     return isinstance(text, str) and text.lstrip().startswith((
-        '[Cronjob "', '[ASYNC DELEGATION ', '[Hermes Muse notification ',
+        '[Cronjob "', '[ASYNC DELEGATION ', '[IMPORTANT:', '[Hermes Muse notification ',
         '[Hermes Muse background evidence]', '[Hermes Muse internal delivery]',
     ))
 
@@ -136,7 +136,7 @@ class Store:
         with self.transaction() as db:
             return self.rows(db, kind)
 
-    def write_text(self, relative, content, *, create_only=False):
+    def write_text(self, relative, content, *, create_only=False, expected_hash=None):
         path = self.path(relative)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if create_only:
@@ -153,21 +153,28 @@ class Store:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
+            if expected_hash is not None and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+                raise ValueError("File changed concurrently; preserve the user's edit and reread")
             os.replace(temporary, path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
         return path
 
-    def goal(self, key):
+    def goal(self, key, *, with_fingerprint=False):
         path = self.path(f"workspace/goals/{identifier(key)}/GOAL.md")
         if not path.exists():
             raise ValueError(f"Unknown goal: {key}")
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         first, _, body = text.partition("\n")
         if not first.startswith("<!-- hermes-muse ") or not first.endswith(" -->"):
             raise ValueError(f"Goal {key} has no valid managed metadata; preserve it and repair explicitly")
-        return json.loads(first[len("<!-- hermes-muse "):-len(" -->")]), body
+        record = json.loads(first[len("<!-- hermes-muse "):-len(" -->")])
+        if record.get("id") != identifier(key):
+            raise ValueError("Managed goal ID does not match its profile path; repair explicitly")
+        result = (record, body)
+        return (*result, hashlib.sha256(raw).hexdigest()) if with_fingerprint else result
 
     def goals(self):
         result = []
@@ -176,6 +183,6 @@ class Store:
             result.append(record)
         return result
 
-    def save_goal(self, record, body):
+    def save_goal(self, record, body, *, expected_hash=None):
         key = identifier(record["id"])
-        self.write_text(f"workspace/goals/{key}/GOAL.md", "<!-- hermes-muse " + json.dumps(record, ensure_ascii=False, allow_nan=False) + " -->\n" + body)
+        self.write_text(f"workspace/goals/{key}/GOAL.md", "<!-- hermes-muse " + json.dumps(record, ensure_ascii=False, allow_nan=False) + " -->\n" + body, expected_hash=expected_hash)

@@ -24,6 +24,8 @@ class DelegationTests(unittest.TestCase):
         patcher = patch.dict(sys.modules, self.modules)
         patcher.start()
         self.addCleanup(patcher.stop)
+        route = patch("hermes_muse.delegation.settings", return_value=None)
+        route.start(); self.addCleanup(route.stop)
 
     def test_cron_inherits_live_parent_and_joins_without_registry_override(self):
         for model in ("fixture-luna", "fixture-other"):
@@ -58,3 +60,30 @@ class DelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lacks per-call"):
             dispatch(self.ctx, {"goal": "x"}, owned_cron=True)
         self.ctx.dispatch_tool.assert_not_called()
+
+    def test_compatible_cron_uses_public_route_and_pin_exceptions_are_explicit(self):
+        self.ctx.dispatch_tool.return_value = json.dumps({'results':[{'status':'completed'}]})
+        with patch('hermes_muse.delegation.settings', return_value={}):
+            result = dispatch(self.ctx, {'goal':'Inspect evidence'}, owned_cron=True)
+        self.assertIn('public_native_route', result['muse_routing'])
+        self.assertEqual([],self.calls)
+        for cfg in ({'model':'different'}, {'provider':'different'}, {'base_url':'https://example.invalid'}, {'fallback_providers':[]}):
+            with patch('hermes_muse.delegation.settings',return_value=cfg):
+                result=dispatch(self.ctx, {'goal':'Inspect evidence'}, owned_cron=True)
+            self.assertIn('legacy_parent_route_exception',result['muse_routing'])
+            self.assertEqual({},self.calls[-1][1])
+
+    def test_route_change_during_public_dispatch_is_unknown_not_retried(self):
+        configs=[{}, {}, {'model':'changed'}]
+        with patch('hermes_muse.delegation.settings', side_effect=configs):
+            with self.assertRaisesRegex(ValueError,'changed during dispatch') as caught:
+                dispatch(self.ctx, {'goal':'Inspect evidence'}, owned_cron=True)
+        self.assertEqual('dispatched',caught.exception.native_result['status'])
+        self.assertEqual(1,self.ctx.dispatch_tool.call_count)
+        self.assertEqual([],self.calls)
+
+    def test_model_toolsets_and_excess_batch_refused_before_provider(self):
+        with patch('hermes_muse.delegation.settings',return_value={'max_concurrent_children':1}):
+            for req in ({'tasks':[{'goal':'One','toolsets':['terminal']}]}, {'tasks':[{'goal':'One'},{'goal':'Two'}]}):
+                with self.assertRaises(ValueError):dispatch(self.ctx,req,owned_cron=True)
+        self.assertEqual([],self.calls);self.ctx.dispatch_tool.assert_not_called()

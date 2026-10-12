@@ -112,7 +112,7 @@ class ResearchTests(unittest.TestCase):
     def test_cron_research_joins_parent_model_workers_with_no_nested_coordinator(self):
         config = types.ModuleType("tools.delegate_tool_config")
         config._get_max_concurrent_children = lambda: 2
-        with patch.dict(sys.modules, {"tools.delegate_tool_config": config}), patch(
+        with patch("hermes_muse.delegation.concurrency_limit", return_value=2), patch(
                 "hermes_muse.delegation.dispatch", return_value={"results": [{"status": "completed"}]}) as dispatch:
             result = native_start(self.store, self.ctx, {"items": ["a", "b", "c", "d", "a"]}, owned_cron=True)
         self.assertTrue(dispatch.call_args.kwargs["owned_cron"])

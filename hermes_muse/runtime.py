@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -12,12 +13,13 @@ from .audit import Audit
 from .host import HermesHost, JOBS, ROOT, profile_scope
 from .service import Companion
 from .store import GOVERNANCE_JOBS, PLUGIN, Store, is_background_message, stamp
+from .followup import context as followup_context
 
 log = logging.getLogger(__name__)
-ACTIONS = ("context", "status", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
+ACTIONS = ("context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
-           "feed_update", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
+           "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -48,6 +50,7 @@ class Runtime:
         self.timers = {}
         self.delivery_turns = {}
         self.run_turns = {}
+        self.followup_contexts = {}
         self.lock = threading.RLock()
         self.closed = False
 
@@ -55,6 +58,16 @@ class Runtime:
         try:
             if self.closed:
                 raise ValueError("Plugin unloaded")
+            # This core forwards session/task only to registry handlers. Its
+            # execution wrapper binds trusted correlation ContextVars instead.
+            # Version-specific read-only adapter; absence leaves IDs unknown.
+            try:
+                from tools import approval_context
+                if approval_context._approval_session_id.get() == kwargs.get("session_id"):
+                    kwargs = {**kwargs, "turn_id": approval_context._approval_turn_id.get(),
+                              "tool_call_id": approval_context._approval_tool_call_id.get()}
+            except (ImportError, AttributeError):
+                pass
             info = session_info()
             if not private_session(info):
                 raise ValueError("Personal Muse data is available in private/direct conversations only")
@@ -65,7 +78,7 @@ class Runtime:
             if action not in ACTIONS:
                 raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
-            if is_delegated_child_context() and action not in {"context", "status", "feed_list", "operations_evidence"}:
+            if is_delegated_child_context() and action not in {"context", "status", "conversation_read", "feed_list", "operations_evidence", "calendar_window", "calendar_view"}:
                 raise ValueError("A delegated child may read Muse context but must return proposed changes to its parent")
             with profile_scope(self.home):
                 self.service.operations.track(kwargs.get("session_id"), kwargs.get("task_id"))
@@ -77,7 +90,9 @@ class Runtime:
                 if delivery and kwargs.get("session_id"):
                     with self.lock:
                         self.delivery_turns[kwargs["session_id"]] = delivery
-                if action in {"context", "status"}:
+                if action == "followup_update":
+                    result = self.service.followups.update(data, session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""))
+                elif action in {"context", "status"}:
                     self.host.reconcile()
                     parts = str(kwargs.get("task_id") or "").split(":", 2)
                     view = None
@@ -117,15 +132,25 @@ class Runtime:
                 elif action == "preferences":
                     result = self.service.preference_update(data)
                 elif action == "watch_create":
+                    # Native cron identity, never a model-supplied ownership flag.
+                    if info["cron"] or str(kwargs.get("task_id") or "").startswith("cron:"):
+                        from hermes_cli.config import load_config_readonly
+                        if load_config_readonly().get("cron", {}).get("allow_agent_scheduling") is not True:
+                            raise ValueError("Cron watch creation is disabled by cron.allow_agent_scheduling; no job created. Existing goal follow-through continues.")
                     result = self.host.watch(data)
                 elif action == "watch_stop":
                     result = self.host.stop_watch(data["job_id"])
                 elif action == "delegate":
-                    from .delegation import dispatch
-                    result = dispatch(self.ctx, data, owned_cron=bool(run or delivery))
+                    from .delegation import dispatch, validate
+                    request = {k: v for k, v in data.items() if k != "goal_id"}
+                    validate(request, owned_cron=bool(run or delivery))
+                    result = self.service.followups.dispatch(data.get("goal_id"),
+                        lambda req: dispatch(self.ctx, req, owned_cron=bool(run or delivery)), request,
+                        session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""), tool_call_id=kwargs.get("tool_call_id"))
                 elif action in {"research_start", "research_status"}:
                     from .research import start, poll
-                    result = (start(self.store, self.ctx, data, owned_cron=bool(run or delivery))
+                    result = (start(self.store, self.ctx, data, owned_cron=bool(run or delivery), followups=self.service.followups,
+                                    session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""), tool_call_id=kwargs.get("tool_call_id"))
                               if action == "research_start" else poll(self.store, self.ctx, data))
                 elif action in {"notification_prepare", "notification_queue", "notification_handoff"}:
                     result = self.service.notification_queue(data, delivery if delivery and delivery.get("kind") != "report" else None)
@@ -142,7 +167,10 @@ class Runtime:
             return json.dumps({"ok": True, "result": result}, ensure_ascii=False, allow_nan=False)
         except Exception as exc:
             log.warning("Hermes Muse action %s failed: %s", args.get("action"), exc)
-            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+            error = {"ok": False, "error": str(exc)}
+            if hasattr(exc, "native_result"):
+                error["native"] = exc.native_result
+            return json.dumps(error, ensure_ascii=False)
 
     def transform_output(self, response_text="", session_id="", **kwargs):
         with self.lock:
@@ -177,7 +205,9 @@ class Runtime:
         if text.lstrip().startswith(('[Cronjob "', "[Hermes Muse notification ", MARKER)):
             return {"context": receiving_instructions()}
         if is_background_message(text):
-            return None
+            match = re.match(r"^\[ASYNC DELEGATION (?:BATCH COMPLETE|COMPLETE|TASK FAILED) — ([A-Za-z0-9_-]+)(?:, task [0-9]+/[0-9]+)?\]", text.lstrip())
+            value = self._followup_context(session_id, turn_id, callback_owner=match[1] if match else None)
+            return {"context": value} if value else None
         if not session_id or not turn_id or not text.strip():
             return None
         with self.lock:
@@ -185,11 +215,35 @@ class Runtime:
             if timer:
                 timer.cancel()
         self.service.signal(turn_id, session_id, text, route_from(info))
-        return {"context": f"[Hermes Muse state pointer] This real user turn has signal_id={turn_id}. Companion workspace: {self.store.root}. For goals, interests, feedback, reminders or Feed, load hermes-muse:companion and use muse_manage. When accepting or changing work, read its communication procedure: think through the outcome and practical consequences, persist the plan, verify actions and explain the useful judgment in the user's own conversational style. Read current state before using old memories as an active goal. This pointer does not authorize extra tasks."}
+        return {"context": f"[Hermes Muse state pointer] This real user turn has signal_id={turn_id}. Companion workspace: {self.store.root}. For goals, interests, feedback, reminders or Feed, load hermes-muse:companion and use muse_manage. When accepting or changing work, read its communication procedure: think through the outcome and practical consequences, persist the plan, verify actions and explain the useful judgment in the user's own conversational style. Read current state before using old memories as an active goal. This pointer does not authorize extra tasks.\n" + self._followup_context(session_id, turn_id, exclude_turn=turn_id)}
+
+    def _followup_context(self, session_id, turn_id, **kwargs):
+        with self.lock:
+            cached = self.followup_contexts.get(session_id)
+            if cached and cached[0] == turn_id:
+                return cached[1]
+            value = followup_context(self.home, now=self.service.clock(), session_id=session_id, **kwargs)
+            self.followup_contexts[session_id] = (turn_id, value)
+            return value
+
+    def pre_tool(self, tool_name="", args=None, **kwargs):
+        from agent.delegation_context import is_delegated_child_context
+        if self.closed or is_delegated_child_context() or not private_session(session_info()):
+            return None
+        with profile_scope(self.home):
+            return self.service.followups.pre_tool(tool_name, args or {}, **kwargs)
+
+    def post_tool(self, tool_name="", args=None, result=None, **kwargs):
+        from agent.delegation_context import is_delegated_child_context
+        if self.closed or is_delegated_child_context() or not private_session(session_info()):
+            return None
+        with profile_scope(self.home):
+            self.service.followups.receipt(tool_name, args or {}, result, **kwargs)
 
     def post_turn(self, session_id="", turn_id="", **kwargs):
         if self.closed:
             return
+        self.service.followups.finish_turn(session_id, turn_id, response=kwargs.get("assistant_response"), history=kwargs.get("conversation_history", ()))
         if private_session(session_info()):
             self.service.operations.track(session_id, kwargs.get("task_id"))
         session = self.store.read("session", session_id)
@@ -232,6 +286,9 @@ class Runtime:
             self.timers.pop(session_id, None)
 
     def end_turn(self, session_id="", turn_id="", **kwargs):
+        if self.closed:
+            return
+        self.service.followups.finish_turn(session_id, turn_id, **kwargs)
         with self.lock:
             self.delivery_turns.pop(session_id, None)
             self.run_turns.pop(session_id, None)
@@ -250,6 +307,7 @@ class Runtime:
             self.timers.clear()
             self.delivery_turns.clear()
             self.run_turns.clear()
+            self.followup_contexts.clear()
 
 
 def register(ctx, *, plugin_root=ROOT):
@@ -260,9 +318,11 @@ def register(ctx, *, plugin_root=ROOT):
     runtime = Runtime(ctx, get_hermes_home(), plugin_root=plugin_root)
     runtime.host.initialize()
     prompt = (runtime.host.root / "prompts/system.md").read_text(encoding="utf-8").replace("{{MUSE_HOME}}", str(runtime.store.root)).replace("{{HERMES_HOME}}", str(runtime.home))
-    ctx.register_skill("companion", runtime.host.root / "skills/companion/SKILL.md", description="Goals, memory upkeep, proactive reminders, reflection, Feed and research lifecycle")
+    ctx.register_skill("companion", runtime.host.root / "skills/companion/SKILL.md", description="Calendar views, goals, memory upkeep, proactive reminders, reflection, Feed and research lifecycle")
     ctx.register_system_prompt_section("hermes-muse.companion", prompt, position="after_memory", max_chars=4000)
     ctx.register_tool(name="muse_manage", toolset="muse", schema=SCHEMA, handler=runtime.handle)
+    ctx.register_hook("pre_tool_call", runtime.pre_tool)
+    ctx.register_hook("post_tool_call", runtime.post_tool)
     ctx.register_hook("pre_llm_call", runtime.pre_turn)
     ctx.register_hook("post_llm_call", runtime.post_turn)
     ctx.register_hook("transform_llm_output", runtime.transform_output)

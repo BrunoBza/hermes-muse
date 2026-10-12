@@ -13,6 +13,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
+sys.path.insert(0, str(PROJECT / "tests"))
 if os.environ.get("HERMES_SOURCE"):
     sys.path.insert(0, os.environ["HERMES_SOURCE"])
     os.environ["PYTHONPATH"] = os.environ["HERMES_SOURCE"] + os.pathsep + os.environ.get("PYTHONPATH", "")
@@ -42,7 +43,7 @@ def main():
         from hermes_muse.host import HermesHost, profile_scope
         from hermes_muse.store import Store
         first_ids = None
-        for index in (0, 1, 0):
+        for visit, index in enumerate((0, 1, 0)):
             home = homes[index]
             token = set_hermes_home_override(home)
             try:
@@ -93,6 +94,9 @@ def main():
                 from cron.executions import create_execution, mark_execution_running, finish_execution
                 from agent.turn_finalizer import apply_llm_output_transform
                 runtime = entry.handler.__self__
+                if visit < 2:
+                    from native_calendar_smoke import run as calendar_checks
+                    calendar_checks(entry, runtime)
                 from agent.subagent_lifecycle import bind_subagent_parent
                 from unittest.mock import patch
                 from hermes_muse.research import start as start_research
@@ -113,7 +117,7 @@ def main():
                 parent.model, parent.provider = "fixture-luna", "custom"
                 parent.requested_provider, parent.base_url = "fixture-provider", "https://fixture.invalid/v1"
                 parent.api_mode, parent.api_key = "chat_completions", "fixture-not-a-secret"
-                with bind_subagent_parent(parent), patch("tools.delegate_tool.delegate_task", autospec=True,
+                with bind_subagent_parent(parent), patch("hermes_cli.config.load_config_readonly", return_value={"delegation": {"model": "fixture-sol"}}), patch("tools.delegate_tool.delegate_task", autospec=True,
                         return_value=json.dumps({"results": [{"status": "completed"}]})) as dispatch:
                     owned = json.loads(entry.handler({"action": "delegate", "data": {"goal": "Inspect fixture evidence"}},
                         task_id="cron:" + patrol + ":" + attempt["id"]))
@@ -227,6 +231,8 @@ def main():
                     runtime.service.signal("history-user", "native-history", "Please diagnose this screenshot.")
                     stale = runtime.service.notification_add({"event_key": "screenshot-stale", "message": "Please send another screenshot.",
                         "rationale": "Regression fixture", "sources": ["fixture"], "verified_at": time.time(), "expires": time.time()+3600})
+                    inspected = json.loads(entry.handler({"action": "context"}))["result"]
+                    assert inspected["recent_conversations"]["native-history"]["complete"]
                     review = runtime.service.notification_review({"id": stale["id"], "conversation_revisions": {"native-history": history["revision"]},
                         "verdict": "resolved", "reason": "Native history confirms the completed diagnosis was already delivered"})
                     assert review["notification"]["status"] == "cancelled"
@@ -259,6 +265,10 @@ def main():
                 assert len(list_jobs(include_disabled=True)) == 6
         from native_companion_smoke import run as companion_checks
         companion_checks(base / "companion")
+        from native_followup_smoke import run as followup_checks
+        followup_checks(base / "followup")
+        from native_compatibility_smoke import run as compatibility_checks
+        compatibility_checks(base / "compatibility")
         print("PASS: native registration, Skill, prompt, tools, six Cron jobs, real script gates, A->B->A isolation, idempotent reload, preserved native files and harmless removed-plugin launchers")
 
 

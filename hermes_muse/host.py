@@ -233,14 +233,17 @@ class HermesHost:
         expires = epoch(data["expires"]) if data.get("expires") else goal.get("deadline")
         if expires is not None and expires <= time.time():
             raise ValueError("Watch expiry must be in the future")
+        from .store import bounded
+        prompt_text = bounded(data.get("prompt"), 4000)
+        stop = bounded(data.get("stop_condition"), 4000)
         key = "watch-" + uuid.uuid4().hex[:12]
         prompt = ("Read hermes-muse:companion including its execution/recovery and communication procedures, and muse_manage context. Work only on goal " + goal["id"] + ". "
                   "Check its status and your stop condition first. Prepare evidence with notification_add. "
                   "Stop and call watch_stop when the promised condition is satisfied. "
                   "As your last step call notification_prepare and return its final_response exactly; "
                   "this job delivers that response. With nothing approved return [SILENT].\n"
-                  + str(data["prompt"]) + "\nStop condition: " + str(data["stop_condition"]))
-        return self._owned_job(key, {"name": "muse-" + key, "schedule": data["schedule"], "prompt": prompt,
+                  + prompt_text + "\nStop condition: " + stop)
+        return self._owned_job(key, {"name": "muse-" + key, "schedule": data.get("schedule", "every 30m"), "prompt": prompt,
                                    "skills": [f"{PLUGIN}:companion"], "deliver": "bot-chat"}, owner=goal["id"], expires=expires)
 
     def is_active_watch(self, job_id, goal_id):
@@ -414,5 +417,7 @@ def cron_run(home, key):
             return {"wakeAgent": False}
     # Fixed jobs must inspect live sources/memory before deciding there is no work.
     # Only owned watches retain their explicit lifecycle gate above.
+    from .followup import snapshot
     return {"wakeAgent": key in JOBS, "job": key, "started_at": stamp(),
+            "followups": snapshot(home) if key in {"proactive-watch", "memory-upkeep", "nightly-review"} else None,
             "instruction": "Call muse_manage context, inspect current sources using this job's Skill, then decide whether there is useful work. No worthwhile notification means [SILENT], not a skipped check."}

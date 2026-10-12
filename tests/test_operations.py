@@ -102,6 +102,16 @@ class OperationTests(OperationFixture):
         self.assertIsNone(page['events'][0]['content'])
         self.assertNotIn('PRIVATE EVIDENCE COPY', json.dumps(page))
 
+    def test_conversation_pages_do_not_audit_themselves_but_failures_remain(self):
+        self.call('conversation-success', name='muse_manage', args={'action':'conversation_read'})
+        success = self.message(role='tool', text='{"ok":true,"result":{"complete":false}}', call_id='conversation-success')
+        self.call('conversation-failure', name='muse_manage', args={'action':'conversation_read'})
+        failure = self.message(role='tool', text='{"ok":false,"error":"missing evidence"}', call_id='conversation-failure')
+        page = self.ops.read({})
+        ids = {event['id'] for event in page['events']}
+        self.assertNotIn(success, ids)
+        self.assertIn(failure, ids)
+
     def test_native_tool_call_wrapper_excludes_only_pure_inspection(self):
         self.call('wrapped', name='tool_call', args={'calls': [{'name': 'muse_manage', 'arguments': {'action': 'operations_read'}}]})
         self.message(role='tool', text='SELF REVIEW OUTPUT', call_id='wrapped')

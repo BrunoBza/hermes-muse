@@ -16,7 +16,7 @@ Installation uses the selected profile. Use `hermes -p default plugins install x
 
 If you maintain explicit `platform_toolsets` lists, include `muse` in the platforms where you use the plugin. An enabled plugin can otherwise load its prompts while its state tool remains unavailable.
 
-Requires Hermes 0.21.5 and the relevant plugin APIs; see the [tested baseline](docs/ACCEPTANCE.md). First load creates the workspace, registers one Skill, one state tool and four conversation hooks, adds one system prompt section, and creates six recurring Cron jobs. There is no feature selection or separate initialization command. Without a running host, loading happens at the next Hermes start.
+Requires Hermes 0.21.5 and the relevant plugin APIs; see the [tested baseline](docs/ACCEPTANCE.md). First load creates the workspace, registers one Skill, one state tool and six lifecycle/tool hooks, adds one system prompt section, and creates six recurring Cron jobs. There is no feature selection or separate initialization command. Without a running host, loading happens at the next Hermes start.
 
 The system prompt section takes effect in new conversations. Background execution requires a running scheduler and an available model. Scheduled checks, research and content generation use the existing model and tools at their normal cost.
 
@@ -65,16 +65,35 @@ The plugin includes eight prompt files:
 
 Hermes appends `system.md` after the memory section through its plugin API; it takes effect in new conversations. `receiving.md` accompanies Bot Chat results and is also used by the receiving conversation hook. The six task files become the corresponding Cron job prompts and are used when those jobs run. Each plugin load refreshes these job prompts while preserving the user's schedule, model and pause settings.
 
+## Accepted work and follow-through
+
+Real conversation hooks retain bounded review references even when the assistant forgot to register a promise. The next user/callback turn and existing patrol/upkeep scripts automatically expose pending reviews and due accepted goals. Candidates need semantic review and the original 24-hour user signal; chat, external text and old memories never activate work.
+
+Native goal-linked delegation persists intent before launch, binds real receipts, and uses callbacks first with bounded recovery on existing ticks. Execution, business verification and final delivery remain separate. Unknown starts are never replayed; ordinary replies without a transport receipt remain unknown, and verified notices confirm only from their exact native execution receipt. No new scheduler, task board, required provider or wider authority is added. See the [followup procedure](skills/companion/references/followup.md) for native-only adapter limits and recovery.
+
+## Calendar views and preparation
+
+Ask “Show my next 30 days” for a rolling interval from now to the same local time 30 days later, or “Show this month” for the natural calendar month. Both use the active profile timezone. IANA timezones follow DST; a native fixed-offset timezone keeps that offset and explicitly reports that DST transitions are unavailable. Original all-day calendar dates stay visible alongside profile-date overlays. Daily schedules retain source/calendar names, recurring exceptions and cancellations, multi-day events, busy dates, overlaps and preparation reasons.
+
+The existing patrol also reads the full next 30 days, including preparation opportunities on days 8–30. It retains the 30-minute schedule, quiet hours, relevance rules and notice lifecycle; distant events do not create extra watches or automatic daily alerts. All enabled authorized Apple, Google and other calendar accounts/resources are discovered and paged through existing tools. Missing collections/pages, unavailable permissions and errors remain coverage gaps; partial results never establish global free time.
+
+The existing `muse_manage` tool adds stateless `calendar_window` and `calendar_view` actions, documented in the [calendar procedure](skills/companion/references/calendar.md). There is no calendar database, sync service, provider requirement or write permission. Rolling and natural-month checks have independent stable source resources and preserve legacy seven-day checkpoints. Dedup uses exact source/account/calendar and occurrence identity; cross-calendar UID copies remain separate unless resolved through original evidence. Matching titles/times never merge distinct events. Assembly validates reported connector observations; actual discovery, reads and preparation judgment remain the model's responsibility.
+
+Apple PIM receipts also support a bounded observation mode: actual returned events remain visible with original UTC times, source provenance and explicitly labelled device all-day display dates. Source timezone, original recurrence identity, cancellation history and availability remain unavailable; Apple coverage stays partial even when all current query pages were read. No connector service or permission changes are needed. See the calendar procedure for the raw receipt format and its limits.
+
 ## Conversation hooks
 
 | Hook | Purpose |
 | --- | --- |
-| pre_llm_call | Before the reply, records a short user excerpt and its source session, and adds a state-tool pointer for goals, interests and feedback. Native Cron results, including other jobs, receive the shared guidance for a self-contained reply instead of becoming user signals. |
+| pre_llm_call | Before the reply, records up to 8,000 user characters and source identity, and adds a state-tool pointer for goals, interests and feedback. Native Cron results, including other jobs, receive the shared guidance for a self-contained reply instead of becoming user signals. |
 | post_llm_call | Associates owned Cron sessions with their native execution IDs for self-review. After replying to a user message of at least 80 characters, waits for five quiet minutes before scheduling memory upkeep. New input cancels the pending timer; at most three early triggers per day. |
 | transform_llm_output | For a patrol/watch that used the state tool, replaces the final response with approved notice bodies or `[SILENT]`. Bot Chat notices and weekly/monthly reports include the same receiving guidance. Ordinary conversations and direct channel reports are unchanged. |
+| pre_tool_call / post_tool_call | Correlate accepted intents with actual native calls/receipts; prevent unsafe replay and preserve unknown outcomes. |
 | on_session_end | Clears the current turn's busy flag so later reminders do not keep waiting on a conversation that has ended. |
 
 User-signal hooks process private and local conversations, skipping groups, Cron, subagent input and completion callbacks. Older misclassified background messages remain as audit evidence outside the user-signal inbox. The output hook is bound to the current owned patrol/watch or governance execution; it does not modify ordinary replies. Delayed upkeep uses the existing memory Cron job. Unloading the plugin from the running process cancels its temporary timers.
+
+Delegates are instructed to remain read-only under inherited host permissions; this is not a hard file/terminal/browser/MCP sandbox.
 
 ## Six recurring Cron jobs
 
@@ -89,7 +108,7 @@ User-signal hooks process private and local conversations, skipping groups, Cron
 
 The plugin does not pin a model or provider on its recurring jobs. Hermes resolves the model at each run: **per-job model → current profile’s `cron.model` → profile’s main model**. Without a Cron default, hourly background work can use the same expensive model as your main conversation. Set a background model before leaving the scheduler running.
 
-Muse Cron instructions use the plugin’s delegation entry for parallel work. Children launched there, including research workers, inherit the running parent’s model and connection: a Luna Cron launches Luna workers; changing the Cron model changes them too. Ordinary chat keeps the profile’s `delegation` settings. Hermes still controls child reasoning effort, permissions and execution limits. A direct native `delegate_task` call bypasses this routing rule.
+Muse Cron uses public delegation when configuration establishes parent-route parity; native stateless Cron joins results. Configured/unknown route conflicts retain an explicit legacy private parent-routing exception, pending a public scoped API; this request is not fully resolved. Ordinary chat keeps native delegation settings. Research/audit allocate at most three workers within lower user limits, preserving every question/page. No global configuration changes. See [exact boundaries](docs/CATALOG-COMPATIBILITY.md).
 
 For example, merge this into the current profile’s `config.yaml`, using a model and provider available in your installation (`llm` here is a configured provider name):
 
@@ -165,7 +184,7 @@ Nightly review can also maintain a short Working lessons section in `muse/AGENTS
 
 Installation does not rewrite Hermes core, SOUL, native USER/MEMORY files, user project AGENTS files or the configured `agent.system_prompt` value. During use, the assistant saves new facts through existing memory tools.
 
-Conversation hooks keep short user excerpts for upkeep. Unprocessed excerpts remain until maintenance succeeds; processed history is bounded. The plugin collects no telemetry and excludes group chats from personal companion workflows. See [SECURITY.md](SECURITY.md) for data scope.
+Private/local user inputs retain their first 8,000 characters, truncation flag, turn/session identity and time; associated routes can include chat/user/thread/message IDs. The newest 500 remain; older rows are cleaned on a subsequent input only after both independent hourly and nightly cursors cover them. Unprocessed backlog can exceed 500 and retention time is not fixed. Native history, research result payloads, followup metadata, goals/memory/Feed and backups have separate retention; see [compatibility and data scope](docs/CATALOG-COMPATIBILITY.md). The plugin collects no telemetry and excludes group chats from personal companion workflows. See [SECURITY.md](SECURITY.md) for data scope.
 
 ## Use
 
@@ -186,6 +205,8 @@ I’m visiting Hangzhou this weekend. Let me know if the weather changes enough 
 I follow space exploration. Important developments are welcome; I don’t need a daily news digest.
 This reminder is done.
 Stop reminders about this topic.
+Show my calendar for the next 30 days, including preparation I should start early.
+Show this month’s calendar with its original all-day dates.
 List my current goals, interests and pending reminders.
 Search my Feed for urban gardening articles.
 ```
@@ -218,3 +239,7 @@ Tests use temporary profiles without real model calls or messaging channels. The
 The [official catalog application](https://github.com/NousResearch/hermes-agent/pull/134976) is pending review. Install from the repository address above in the meantime.
 
 MIT licensed.
+
+## Conversation preview and scheduling policy
+
+Recent conversation context uses bounded previews with complete revision-checked paging; partial evidence blocks task-notice approval. See the [conversation procedure](skills/companion/references/conversations.md). Cron watch creation respects `cron.allow_agent_scheduling`; local goal registration creates no job. New watch prompt/stop fields each allow 4,000 characters without truncation. Omitted cadence defaults to 30 minutes; explicit shorter and one-off native schedules remain supported. No absolute 30-minute floor or existing-job rewrite is claimed.

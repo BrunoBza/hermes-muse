@@ -102,6 +102,7 @@ class CompanionTests(unittest.TestCase):
         snapshot = {"available": True, "revision": "r1", "messages": [{"id": 1, "text": "Need a result"}]}
         self.host.conversation = lambda sid, since: snapshot
         row = self.notice()
+        self.service.conversation_states(served=True)  # Model inspected the actual preview first.
         self.service.notification_review({"id": row["id"], "conversation_revisions": {"session-a": "r1"},
             "verdict": "relevant", "reason": "No completed answer in the current native history"})
         binding = {"job_id": "patrol", "execution_id": "r", "route": {"deliver": "bot-chat"}}

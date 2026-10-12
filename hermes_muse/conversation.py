@@ -1,5 +1,6 @@
 """Read native conversation evidence without copying or writing session history."""
 import json
+from contextlib import nullcontext
 from .store import digest, is_background_message
 
 
@@ -47,3 +48,90 @@ def read_conversation(home, session_id, since):
     finally:
         if db is not None:
             db.close()
+
+# Text budgets apply to the automatic conversation preview, not to total work.
+PREVIEW_MESSAGES = 24
+PREVIEW_CHARS = 24000
+PAGE_CHARS = 12000
+
+
+def _merge(ranges):
+    result = []
+    for lo, hi in sorted(ranges):
+        if hi <= lo:
+            continue
+        if result and lo <= result[-1][1]:
+            result[-1][1] = max(result[-1][1], hi)
+        else:
+            result.append([lo, hi])
+    return result
+
+
+def _coverage(store, state, ranges, now, db=None):
+    """Only references/ranges are persisted, never another conversation body."""
+    key = digest(state['session_id'])
+    total = sum(len(m['text']) for m in state['messages'])
+    with (nullcontext(db) if db is not None else store.transaction()) as db:
+        previous = store.get(db, 'conversation_window', key, {})
+        if previous.get('revision') != state['revision']:
+            previous = {}
+        covered = _merge(previous.get('ranges', []) + ranges)
+        store.put(db, 'conversation_window', key, {'revision': state['revision'], 'ranges': covered, 'at': now})
+    return total == 0 or covered == [[0, total]]
+
+
+def previews(store, states, now, db=None, served=True):
+    """Fair bounded preview; complete means this exact revision has been served in full."""
+    result = {}
+    share = PREVIEW_CHARS // max(1, len(states))
+    for sid, state in states.items():
+        if not state.get('available'):
+            result[sid] = {**state, 'complete': False}
+            continue
+        messages = state.get('messages', [])
+        positions, at = [], 0
+        for m in messages:
+            positions.append(at)
+            at += len(m['text'])
+        selected, ranges, remaining = [], [], share
+        for i in range(len(messages) - 1, max(-1, len(messages) - PREVIEW_MESSAGES - 1), -1):
+            m = messages[i]
+            count = min(len(m['text']), 1000, remaining)
+            if count <= 0:
+                break
+            selected.append({**m, 'text': m['text'][:count], 'text_chars': len(m['text']),
+                             'truncated': count < len(m['text']), 'offset': positions[i]})
+            ranges.append([positions[i], positions[i] + count])
+            remaining -= count
+        selected.reverse()
+        complete = _coverage(store, state, ranges if served else [], now, db)
+        result[sid] = {**state, 'messages': selected, 'complete': complete,
+                       'preview_complete': len(selected) == len(messages) and all(not m['truncated'] for m in selected),
+                       'total_messages': len(messages), 'total_text_chars': at,
+                       'next_offset': None if complete else 0,
+                       'instruction': 'Preview is not full evidence. Use conversation_read with session_id, revision and offset; follow next_offset. Missing/changed evidence blocks task-notice review.'}
+    return result
+
+
+def page(store, state, data, now):
+    if not state.get('available') or state['revision'] != data.get('revision'):
+        return {'available': False, 'complete': False, 'reason': 'Conversation changed or is unavailable; refresh context. No coverage transferred.'}
+    offset = data.get('offset', 0)
+    total = sum(len(m['text']) for m in state['messages'])
+    if type(offset) is not int or not 0 <= offset <= total:
+        raise ValueError('Conversation offset must be within this exact snapshot')
+    end = min(total, offset + PAGE_CHARS)
+    messages, position = [], 0
+    for m in state['messages']:
+        following = position + len(m['text'])
+        lo, hi = max(offset, position), min(end, following)
+        if hi > lo:
+            messages.append({**m, 'text': m['text'][lo-position:hi-position],
+                             'message_offset': lo-position, 'text_chars': len(m['text']),
+                             'truncated': lo > position or hi < following})
+        position = following
+    complete = _coverage(store, state, [[offset, end]], now)
+    return {'available': True, 'session_id': state['session_id'], 'revision': state['revision'],
+            'messages': messages, 'offset': offset, 'next_offset': end if end < total else None,
+            'total_text_chars': total, 'complete': complete,
+            'instruction': 'Read every relevant chunk; coverage is served evidence, not semantic verification or authority. A page endpoint is not a processing watermark.'}

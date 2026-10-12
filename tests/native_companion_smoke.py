@@ -76,14 +76,21 @@ def run(home):
             call("forget", kind="interest", id="discard", signal_id="discard-choice")
             assert runtime.store.read("interest", "discard") is None
             owned = None
-            for schedule in ("every 5m", "* * * * *", "*/31 * * * *", "10,50 0,23 * * MON", "in 1m"):
-                watch = call("watch_create", goal_id="bicycle", signal_id="new-user-choice", schedule=schedule,
-                             prompt="x" * 5000, stop_condition="User chooses a bicycle")
-                assert get_job(watch["id"]), schedule
-                if owned is None:
-                    owned = watch
-                else:
-                    remove_job(watch["id"])
+            refused = json.loads(runtime.handle({"action":"watch_create", "data": {
+                "goal_id":"bicycle", "signal_id":"new-user-choice", "schedule":"every 5m",
+                "prompt":"Read fixture", "stop_condition":"User chooses"}}))
+            assert not refused["ok"] and "allow_agent_scheduling" in refused["error"]
+            from hermes_cli.config import load_config_readonly
+            config = {**load_config_readonly(), "cron": {"allow_agent_scheduling": True}}
+            with patch("hermes_cli.config.load_config_readonly", return_value=config):
+                for schedule in ("every 5m", "* * * * *", "*/31 * * * *", "10,50 0,23 * * MON", "in 1m"):
+                    watch = call("watch_create", goal_id="bicycle", signal_id="new-user-choice", schedule=schedule,
+                                 prompt="x" * 4000, stop_condition="User chooses a bicycle")
+                    assert get_job(watch["id"]), schedule
+                    if owned is None:
+                        owned = watch
+                    else:
+                        remove_job(watch["id"])
         finally:
             clear_session_vars(tokens)
 
