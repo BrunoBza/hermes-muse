@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. context returns live state and real user signal IDs. Never invent a signal ID, delivery receipt or authorization.",
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context refreshes state and returns real user signals; child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -100,10 +100,27 @@ class Runtime:
                 raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
             delegated = is_delegated_child_context()
-            # Installed host exposes child identity, but no public object-grant propagation.
-            # Do not trust allowed_ids supplied by a child; parent provides cropped evidence.
-            if delegated and action not in {"calendar_window", "calendar_view"}:
-                raise DomainError("permission_denied", "No trusted object grant in this child context; ask the parent for scoped evidence")
+            # Children inherit the native profile/user scope. Reading needs no
+            # plugin grant service; global writes and lifecycle refresh stay parent-owned.
+            child_reads = {"context", "status", "content_read", "feed_list", "operations_evidence",
+                           "conversation_read", "calendar_window", "calendar_view"}
+            if delegated and action not in child_reads:
+                raise DomainError("permission_denied", "Child tasks may read current-profile evidence; state changes and checkpoints belong to the parent")
+            if delegated and action in {"context", "status"}:
+                view = Views(self.home)
+                result = {"scope_token": view.scope(), "read_semantics": "pure read; no tracking, reconciliation or coverage writes",
+                          "collections": {kind: view.read({"kind": kind}) for kind in ("goal", "feed", "idea", "notice", "run", "source_check")},
+                          "instruction": "Use content_read with each collection cursor or object ID for more. The parent owns updates and audit checkpoints."}
+                if action == "status":
+                    result["installation"] = view.read({"kind": "installation", "id": "current"})
+                return self._response(result)
+            if action == "operations_evidence":
+                return self._response(self.service.operations.evidence(data))
+            if action == "conversation_read" and (delegated or data.get("read_only")):
+                from .conversation import read_page
+                return self._response(read_page(self.home, data, self.service.clock()))
+            if action == "conversation_read" and any(k in data for k in ("since", "until")):
+                raise DomainError("invalid_argument", "History time filters require read_only=true; filtered reads cannot certify notice coverage")
             if action in {"content_read", "feed_list", "calendar_window", "calendar_view"}:
                 if action == "content_read":
                     view = Views(self.home)
@@ -174,8 +191,6 @@ class Runtime:
                         "complete": bool(result.get("batch_complete")) and not result.get("more", True),
                         "phase": "allocated" if action == "operations_batch" else "reviewed",
                         **{k: result[k] for k in ("checkpoint", "allocated_slots", "reviewed_slots", "newly_reviewed_slots", "continuous_slots", "remaining_slots", "observed_at", "deferred") if k in result}})
-                elif action == "operations_evidence":
-                    result = self.service.operations.evidence(data)
                 elif action in {"operations_read", "operations_complete", "finding_record"}:
                     method = {"operations_read": "read", "operations_complete": "complete", "finding_record": "finding"}[action]
                     result = getattr(self.service.operations, method)(data)

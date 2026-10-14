@@ -5,7 +5,7 @@ from .content_io import DomainError
 FIELDS = {
     "context": "",
     "status": "",
-    "conversation_read": "session_id revision offset",
+    "conversation_read": "session_id revision offset read_only since until",
     "content_read": "kind id resource scope_token offset length revision cursor limit topic query",
     "content_write": "kind id resource scope_token body expected_revision request_id signal_id",
     "memory_feedback_review": "receipt_id decision reason expected_revision request_id",
@@ -33,7 +33,7 @@ FIELDS = {
     "source_check": "source started_at status scope summary expected_resources checked_resources cursor query_window observed_at source_id alias_reason",
     "operations_read": "through",
     "operations_batch": "",
-    "operations_evidence": "receipt ref offset length",
+    "operations_evidence": "receipt ref offset length limit session_id job_id since until",
     "operations_complete": "token summary",
     "operations_commit": "batch reviews",
     "finding_record": "id evidence summary impact status verification disclosure no_notice_reason",
@@ -82,7 +82,7 @@ def validate(action, data):
         if name in {"offset", "length", "limit", "batch"} and type(value) is not int:
             raise DomainError("invalid_argument", name + " must be an integer")
         if (
-            name in {"delete", "external_status_verified", "final_result"}
+            name in {"delete", "external_status_verified", "final_result", "read_only"}
             and type(value) is not bool
         ):
             raise DomainError("invalid_argument", name + " must be boolean")

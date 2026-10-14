@@ -226,9 +226,11 @@ class Operations:
     def evidence(self, data):
         """Read only references issued to an audit page, without copying a transcript to plugin state."""
         token = data.get("receipt")
-        snapshot = self.store.read("operation_snapshot", token, {})
+        from .views import Views
+        view = Views(self.store.home)
+        snapshot = view.record("operation_snapshot", token) or {}
         if not snapshot:
-            legacy = self.store.read("meta", "operation_snapshot", {})
+            legacy = view.record("meta", "operation_snapshot") or {}
             if legacy.get("token") == token:
                 snapshot = legacy
         if not snapshot or snapshot["execution_through"] < self.clock() - 7 * DAY:
@@ -274,14 +276,37 @@ class Operations:
                         missing.append(item)
         elif execution_refs:
             missing.extend(execution_refs)
-        wave = self.store.read("meta", "operation_wave", {})
+        wave = view.record("meta", "operation_wave") or {}
         slot = next((p["slot"] for p in wave.get("pages", []) if p["receipt"] == token), None)
         identity = {"receipt": token, "batch": wave.get("number") if slot else None, "slot": slot,
                     "expected_refs": snapshot["refs"], "returned_refs": [r["ref"] for r in events + executions],
                     "historical_content": True, "observed_at": self.clock()}
+        since = epoch(data["since"]) if "since" in data else 0
+        until = epoch(data["until"]) if "until" in data else self.clock()
+        if not 0 <= since <= until:
+            raise ValueError("Use an ordered nonnegative evidence time window")
+        def selected(row):
+            at = row.get("timestamp")
+            if at is None:
+                at = epoch(row.get("finished_at") or row["claimed_at"])
+            return (since <= at <= until
+                    and (not data.get("session_id") or row.get("session_id") == data["session_id"])
+                    and (not data.get("job_id") or row.get("job_id") == data["job_id"]))
+        events, executions = [r for r in events if selected(r)], [r for r in executions if selected(r)]
         if ref is None:
-            return {**identity, "events": [preview(e) for e in events], "executions": executions, "missing": missing,
-                    "instruction": "This is an evidence index. Expand truncated entries needed to verify intent, effects, failures or promises via the same receipt and ref. Group related calls/results; harmless known read-only inspections need no body replay. Never call a preview a full evidence review."}
+            offset, limit = data.get("offset", 0), data.get("limit", 25)
+            if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+                raise ValueError("Evidence index needs offset>=0 and limit 1..100")
+            rows = [preview(e) for e in events] + executions
+            page = rows[offset:offset + limit]
+            event_refs = {r["ref"] for r in events}
+            return {**identity, "returned_refs": [r["ref"] for r in page],
+                    "events": [r for r in page if r["ref"] in event_refs],
+                    "executions": [r for r in page if r["ref"] not in event_refs], "missing": missing,
+                    "total": len(rows), "next_offset": offset + limit if offset + limit < len(rows) else None,
+                    "instruction": "Index only, not a substantive review. Page the index with next_offset; expand original bodies with receipt+ref and follow each body next_offset. Time/session/job filters only narrow this receipt, never expand its profile scope."}
+        if not events and not executions and not missing:
+            raise ValueError("Evidence ref does not match the requested time/session/job filters")
         text = json.dumps((events + executions)[0], ensure_ascii=False) if events or executions else ""
         offset, length = data.get("offset", 0), data.get("length", 12000)
         if type(offset) is not int or offset < 0 or type(length) is not int or not 1 <= length <= 24000:

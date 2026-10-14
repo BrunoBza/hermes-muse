@@ -6,7 +6,7 @@ One registered tool, `muse_manage(action, data)`, with 41 actions. Models never 
 |---|---|---|
 | `context` | `` | Action-specific token/revision or pure read |
 | `status` | `` | Action-specific token/revision or pure read |
-| `conversation_read` | `session_id revision offset` | Action-specific token/revision or pure read |
+| `conversation_read` | `session_id revision offset read_only since until` | Action-specific token/revision or pure read |
 | `content_read` | `kind id resource scope_token offset length revision cursor limit topic query` | Action-specific token/revision or pure read |
 | `content_write` | `kind id resource scope_token body expected_revision request_id signal_id` | Action-specific token/revision or pure read |
 | `memory_feedback_review` | `receipt_id decision reason expected_revision request_id` | Action-specific token/revision or pure read |
@@ -34,7 +34,7 @@ One registered tool, `muse_manage(action, data)`, with 41 actions. Models never 
 | `source_check` | `source started_at status scope summary expected_resources checked_resources cursor query_window observed_at source_id alias_reason expected_revision request_id scope_token` | Required revision + request key |
 | `operations_read` | `through` | Action-specific token/revision or pure read |
 | `operations_batch` | `` | Action-specific token/revision or pure read |
-| `operations_evidence` | `receipt ref offset length` | Action-specific token/revision or pure read |
+| `operations_evidence` | `receipt ref offset length limit session_id job_id since until` | Action-specific token/revision or pure read |
 | `operations_complete` | `token summary` | Action-specific token/revision or pure read |
 | `operations_commit` | `batch reviews` | Action-specific token/revision or pure read |
 | `finding_record` | `id evidence summary impact status verification disclosure no_notice_reason expected_revision request_id scope_token` | Required revision + request key |
@@ -46,4 +46,6 @@ One registered tool, `muse_manage(action, data)`, with 41 actions. Models never 
 | `forget` | `kind object_kind id resource signal_id external_status_verified expected_revision request_id scope_token` | Required revision + request key |
 | `followup_update` | `kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id` | Action-specific token/revision or pure read |
 
-See [content access](../skills/companion/references/content.md) for kinds, resource mapping and recovery. The notification prepare/queue/handoff aliases share the same implementation. `content_read` and UI never construct Store or Runtime; context/status do refresh/reconcile and must not be used for UI GET.
+See [content access](../skills/companion/references/content.md) for kinds, resource mapping and recovery. The notification prepare/queue/handoff aliases share the same implementation. `content_read` and UI never construct Store or Runtime; parent context/status do refresh/reconcile and must not be used for UI GET; child projections are pure.
+
+Native children may read content_read/feed_list/operations_evidence/conversation_read/calendar_window/calendar_view within the host profile and private-user boundary. Child context/status return pure paginated projections before track/bind/reconcile. operations_evidence indexes use offset/limit and next_offset; bodies use ref/offset/length. session_id/job_id/since/until narrow saved receipt evidence. conversation_read is always pure for children; parent default retains served coverage, while read_only=true enables pure history with since/until and revision-checked continuation. operations_read/batch and all writes/checkpoints remain parent-only. No model-supplied profile/home or new grant authority.

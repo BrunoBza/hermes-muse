@@ -195,3 +195,9 @@ Initial independent companion assembly: one Skill, four script-gated recurring j
 - Make audit packages parent-only while trusted child grants are unavailable; reject empty-evidence dispatch.
 - Resolve source aliases once through the shared service resolver so CAS protects the actual canonical row.
 - Document the unresolved Windows regression; no unsafe fallback or Windows acceptance claim.
+
+### Child evidence and parallel review correction (unreleased)
+
+- Allow native children to read current-profile evidence/content without an extra grant service; keep global writes/checkpoints parent-owned.
+- Route child context/status and history to pure projections; add paged evidence indexes and time/session/job narrowing.
+- Restore executable parallel audit packages and native dispatch, preserving original-owner recovery and contiguous parent commits.

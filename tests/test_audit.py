@@ -80,11 +80,10 @@ class AuditTests(OperationFixture):
         batch = audit.batch()
         request = {'tasks':[batch['assignments'][0]['task']]}
         calls = []
-        self.assertFalse(batch['assignments'][0]['dispatchable'])
-        self.assertEqual(batch['assignments'][0]['review_mode'], 'parent')
-        self.assertNotIn('Call muse_manage operations_evidence', request['tasks'][0]['goal'])
-        with self.assertRaisesRegex(ValueError, 'Parent-only'):
-            audit.dispatch(request, lambda: calls.append('launch') or {})
+        self.assertTrue(batch['assignments'][0]['dispatchable'])
+        self.assertEqual(batch['assignments'][0]['review_mode'], 'parallel')
+        self.assertIn('Call muse_manage operations_evidence', request['tasks'][0]['goal'])
+        audit.dispatch(request, lambda: calls.append('launch') or {'delegation_id': 'original'})
         receipt = batch['assignments'][0]['receipt']
         for state in ('pending', 'active', 'unknown', 'finished'):
             self.store.write('operation_dispatch', receipt,
@@ -94,7 +93,7 @@ class AuditTests(OperationFixture):
             saved = audit.batch()
             self.assertFalse(saved['assignments'])
             self.assertEqual(saved['pending_owners'][0]['owner_id'], 'original')
-        self.assertFalse(calls)
+        self.assertEqual(calls, ['launch'])
 
 
 

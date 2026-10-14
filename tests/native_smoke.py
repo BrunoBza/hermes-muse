@@ -211,7 +211,7 @@ def main():
                     from agent.delegation_context import delegated_child_context
                     with delegated_child_context("audit-worker"):
                         evidence = json.loads(call_registered({"action": "operations_evidence", "data": {"receipt": receipt}}))
-                        assert not evidence["ok"] and evidence["code"] == "permission_denied", evidence
+                        assert evidence["ok"], evidence
                         forbidden = json.loads(call_registered({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Must return to parent"}]}}))
                         assert not forbidden["ok"], "Audit workers cannot advance parent state"
                     committed = json.loads(call_registered({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Parent verified native evidence and worker findings"}]}}))

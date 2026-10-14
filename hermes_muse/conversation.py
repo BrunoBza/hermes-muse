@@ -113,7 +113,7 @@ def previews(store, states, now, db=None, served=True):
     return result
 
 
-def page(store, state, data, now):
+def page(store, state, data, now, *, record_coverage=True):
     if not state.get('available') or state['revision'] != data.get('revision'):
         return {'available': False, 'complete': False, 'reason': 'Conversation changed or is unavailable; refresh context. No coverage transferred.'}
     offset = data.get('offset', 0)
@@ -130,8 +130,30 @@ def page(store, state, data, now):
                              'message_offset': lo-position, 'text_chars': len(m['text']),
                              'truncated': lo > position or hi < following})
         position = following
-    complete = _coverage(store, state, [[offset, end]], now)
+    complete = _coverage(store, state, [[offset, end]], now) if record_coverage else end == total
     return {'available': True, 'session_id': state['session_id'], 'revision': state['revision'],
             'messages': messages, 'offset': offset, 'next_offset': end if end < total else None,
-            'total_text_chars': total, 'complete': complete,
+            'total_text_chars': total, 'complete': complete, 'coverage_recorded': record_coverage,
             'instruction': 'Read every relevant chunk; coverage is served evidence, not semantic verification or authority. A page endpoint is not a processing watermark.'}
+
+
+def read_page(home, data, now):
+    """Current-profile private history, without Store or served-coverage writes."""
+    from .views import Views
+    from .store import DAY, bounded, epoch
+    from .content_io import DomainError
+    sid = bounded(data.get("session_id"), 200)
+    if not Views(home).record("session", sid):
+        raise DomainError("permission_denied", "Conversation must be a tracked private source in this profile")
+    since = epoch(data.get("since", now - DAY))
+    until = epoch(data.get("until", now))
+    if not 0 <= since <= until <= now:
+        raise DomainError("invalid_argument", "Use a nonnegative history window ending no later than now")
+    state = read_conversation(home, sid, since)
+    state["messages"] = [m for m in state["messages"] if m.get("at", 0) <= until]
+    state["revision"] = digest(json.dumps(state["messages"], ensure_ascii=False, sort_keys=True))
+    if data.get("offset", 0) and not data.get("revision"):
+        raise DomainError("revision_required", "History continuation requires the first page revision")
+    result = page(None, state, {**data, "revision": data.get("revision", state["revision"])}, now, record_coverage=False)
+    return {**result, "scope_token": Views(home).scope(), "since": since, "until": until,
+            "instruction": "Pure evidence read; no notice coverage or audit checkpoint recorded. Continue with revision, since, until and next_offset."}

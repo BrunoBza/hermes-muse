@@ -168,6 +168,26 @@ class OperationTests(OperationFixture):
         self.assertFalse(page['available'])
         self.assertNotIn('token', page)
 
+    def test_evidence_index_filters_page_without_checkpoint_or_record_writes(self):
+        for n in range(7):
+            self.call(str(n))
+        with closing(sqlite3.connect(self.home / 'cron/executions.db')) as d, d:
+            d.execute('INSERT INTO executions VALUES(?,?,?,?,?,?,?)', ('attempt', 'owned', 'failed', stamp(self.now - 30), stamp(self.now - 5), 'fixture', None))
+        receipt = self.ops.read({})['token']
+        before = (self.home / 'muse/state.db').read_bytes()
+        refs, offset = [], 0
+        while offset is not None:
+            page = self.ops.evidence({'receipt': receipt, 'session_id': 'main', 'limit': 2, 'offset': offset})
+            refs.extend(page['returned_refs'])
+            offset = page['next_offset']
+        self.assertEqual(len(set(refs)), 7)
+        filtered = self.ops.evidence({'receipt': receipt, 'job_id': 'owned', 'since': self.now - 6})
+        self.assertEqual(filtered['returned_refs'], ['execution:attempt'])
+        self.assertFalse(self.ops.evidence({'receipt': receipt, 'until': self.now - 40})['returned_refs'])
+        self.assertEqual(before, (self.home / 'muse/state.db').read_bytes())
+        with self.assertRaises(ValueError):
+            self.ops.evidence({'receipt': receipt, 'ref': refs[0], 'job_id': 'owned'})
+
     def test_execution_failure_without_session_and_later_completion(self):
         with closing(sqlite3.connect(self.home / 'cron/executions.db')) as d, d:
             d.execute('INSERT INTO executions VALUES(?,?,?,?,?,?,?)', ('failed', 'owned', 'failed', stamp(self.now - 30), stamp(self.now - 5), 'model unavailable', None))

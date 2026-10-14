@@ -238,7 +238,7 @@ MIT 开源协议。
 
 Cron新建watch遵循cron.allow_agent_scheduling；本地goal登记不创建Cron。watch的prompt/stop各显式校验4,000字符，不静默截断；省略schedule默认每30分钟，明确更短/一次性原生schedule仍支持，未实施绝对30分钟底线，不改已有jobs。
 
-Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊重用户 delegation.* 的 provider/model/reasoning/concurrency；未覆盖时才由宿主采用父模型默认。研究最多 3 并尊重更低限额；当前宿主没有可信审阅对象授权传递，审阅工作包由父任务直接读完整证据并审阅，不下发只有索引的空证据子任务，全部问题与审阅槽保留。新建重复 watch 至少 30 分钟，once 豁免；已有排程不追改。Cron 修改 feed_brief 不自唤醒。详见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
+Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊重用户 delegation.* 的 provider/model/reasoning/concurrency；未覆盖时才由宿主采用父模型默认。研究最多 3 并尊重更低限额；审阅工作包交给原生 child，在当前 profile 通过 muse_manage 分页读取实际证据，返回结论后由父任务核验并提交；父直接审阅作为 fallback，不再额外要求 child grant，全部问题与审阅槽保留。新建重复 watch 至少 30 分钟，once 豁免；已有排程不追改。Cron 修改 feed_brief 不自唤醒。详见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
 
 
 ## 0.2.0 统一入口与页面

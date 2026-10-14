@@ -9,7 +9,6 @@ import sys
 import tempfile
 import time
 import uuid
-from types import SimpleNamespace
 from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
@@ -96,12 +95,11 @@ with tempfile.TemporaryDirectory(prefix='muse-boundary-') as temporary:
             native.append_message('origin', 'tool', 'x'*26000+'FULL-EVIDENCE-END', tool_name='read_file', tool_call_id='read-fixture')
             batch = call('operations_batch')
             assignment = batch['assignments'][0]
-            assert assignment['dispatchable'] is False and assignment['review_mode'] == 'parent'
-            with patch('agent.delegation_context.is_delegated_child_context', return_value=True):
-                assert call('operations_evidence', {'receipt': assignment['receipt']}, False)['code'] == 'permission_denied'
-            with patch('agent.subagent_lifecycle.get_active_subagent_parent', return_value=SimpleNamespace(valid_tool_names=['delegate_task'])):
-                denied = call('delegate', {'tasks': [assignment['task']]}, False)
-                assert 'Parent-only' in denied['error']
+            assert assignment['dispatchable'] is True and assignment['review_mode'] == 'parallel'
+            from agent.delegation_context import delegated_child_context
+            with delegated_child_context("audit-reader"):
+                assert call('operations_evidence', {'receipt': assignment['receipt']})['receipt'] == assignment['receipt']
+                assert call('operations_commit', {'batch': batch['batch'], 'reviews': [{'slot':assignment['slot'], 'summary':'child cannot commit'}]}, False)['code'] == 'permission_denied'
             index = call('operations_evidence', {'receipt': assignment['receipt']})
             assert not index['missing']
             texts = []
