@@ -1,4 +1,4 @@
-"""Deterministic stdlib packaging; both SDKs use the same read-only component."""
+"""Deterministic stdlib packaging; both SDKs share content views; only Dashboard adds profile administration."""
 
 from pathlib import Path
 
