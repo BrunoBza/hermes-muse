@@ -440,70 +440,77 @@ class Companion:
     def calendar_view(self, data):
         return assemble(data, self.host.local_now(self.clock()))
 
-    def source_check(self, data):
-        """Stable source identity and explicit coverage, independent of scan dates/prose."""
+    def source_identity(self, data, db):
+        """Resolve the actual write target once for both semantic CAS and mutation."""
         source = data.get("source")
         fields = {"connection", "account", "resource"}
         if not isinstance(source, dict) or set(source) != fields:
             raise ValueError("source needs connection, account and resource (stable tool/account/resource IDs, no scan dates)")
         source = {k: bounded(source[k], 500) for k in sorted(fields)}
         key = "source-" + digest(json.dumps(source, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
-        started = epoch(data["started_at"])
-        now = self.clock()
-        if not 0 < started <= now:
-            raise ValueError("Source check start must be a past or current timestamp")
-        status = data["status"]
-        if status not in {"checked", "partial", "error", "unavailable"}:
-            raise ValueError("Invalid source check status")
-        scope = bounded(data["scope"], 1000)
-        summary = bounded(data["summary"], 2000)
-        coverage = {}
-        for field in ("expected_resources", "checked_resources"):
-            values = data.get(field, [])
-            if not isinstance(values, list) or len(values) > 500:
-                raise ValueError(field + " must be a list of resource IDs")
-            coverage[field] = sorted(set(bounded(v, 1000) for v in values))
-        expected, checked = coverage["expected_resources"], coverage["checked_resources"]
-        if not set(checked).issubset(expected):
-            raise ValueError("checked_resources must belong to expected_resources")
-        if status == "checked" and (not expected or checked != expected):
-            status = "partial"  # A listed calendar is not a queried calendar.
-        cursor = data.get("cursor")
-        if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 4000):
-            raise ValueError("Source cursor must be text up to 4000 characters")
-        observation = {}
-        if "query_window" in data:
-            validate_window(data["query_window"])
-            if source["resource"] != data["query_window"]["source_resource"]:
-                raise ValueError("Calendar query_window must match its separate source resource")
-            observed = epoch(data["observed_at"])
-            if started != epoch(data["query_window"]["observed_at"]) or not started <= observed <= now:
-                raise ValueError("Calendar observation must fall between query start and current time")
-            observation = {"query_window": data["query_window"], "observed_at": observed}
+        alias = self.store.get(db, "source_alias", key)
+        target, seen = data.get("source_id") or key, set()
+        while target not in seen:
+            seen.add(target)
+            binding = self.store.get(db, "source_alias", identifier(target))
+            if not binding:
+                break
+            if any(binding.get("source", {}).get(f) != source[f] for f in ("account", "resource")):
+                raise ValueError("Source alias must retain the same account and resource")
+            target = binding["target"]
+        else:
+            raise ValueError("Source alias cycle; inspect recorded identities before continuing")
+        if target == key:
+            return key, source, None
+        canonical = self.store.get(db, "source_check", identifier(target))
+        if not canonical or any(canonical["source"][f] != source[f] for f in ("account", "resource")):
+            raise ValueError("source_id must identify the same account and resource; never merge different accounts/collections")
+        reason = (alias or {}).get("reason") or bounded(data.get("alias_reason"), 1000)
+        return target, canonical["source"], (key, {"target": target, "source": source, "reason": reason})
+
+    def source_check(self, data):
+        """Stable source identity and coverage, using the same target as tool CAS."""
         with self.store.transaction() as db:
-            alias = self.store.get(db, "source_alias", key)
-            target = data.get("source_id") or key
-            # In-flight patrols may still hold the ID of an already merged alias.
-            seen = set()
-            while target not in seen:
-                seen.add(target)
-                binding = self.store.get(db, "source_alias", target)
-                if not binding:
-                    break
-                target = binding["target"]
-            else:
-                raise ValueError("Source alias cycle; inspect recorded identities before continuing")
-            if target != key:
-                canonical = self.store.get(db, "source_check", identifier(target))
-                if not canonical or any(canonical["source"][f] != source[f] for f in ("account", "resource")):
-                    raise ValueError("source_id must identify the same account and resource; never merge different accounts/collections")
-                reason = (alias or {}).get("reason") or bounded(data.get("alias_reason"), 1000)
-                self.store.put(db, "source_alias", key, {"target": target, "source": source, "reason": reason})
-                duplicate = self.store.get(db, "source_check", key)
+            key, source, binding = self.source_identity(data, db)
+            started = epoch(data["started_at"])
+            now = self.clock()
+            if not 0 < started <= now:
+                raise ValueError("Source check start must be a past or current timestamp")
+            status = data["status"]
+            if status not in {"checked", "partial", "error", "unavailable"}:
+                raise ValueError("Invalid source check status")
+            scope = bounded(data["scope"], 1000)
+            summary = bounded(data["summary"], 2000)
+            coverage = {}
+            for field in ("expected_resources", "checked_resources"):
+                values = data.get(field, [])
+                if not isinstance(values, list) or len(values) > 500:
+                    raise ValueError(field + " must be a list of resource IDs")
+                coverage[field] = sorted(set(bounded(v, 1000) for v in values))
+            expected, checked = coverage["expected_resources"], coverage["checked_resources"]
+            if not set(checked).issubset(expected):
+                raise ValueError("checked_resources must belong to expected_resources")
+            if status == "checked" and (not expected or checked != expected):
+                status = "partial"  # A listed calendar is not a queried calendar.
+            cursor = data.get("cursor")
+            if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 4000):
+                raise ValueError("Source cursor must be text up to 4000 characters")
+            observation = {}
+            if "query_window" in data:
+                validate_window(data["query_window"])
+                if source["resource"] != data["query_window"]["source_resource"]:
+                    raise ValueError("Calendar query_window must match its separate source resource")
+                observed = epoch(data["observed_at"])
+                if started != epoch(data["query_window"]["observed_at"]) or not started <= observed <= now:
+                    raise ValueError("Calendar observation must fall between query start and current time")
+                observation = {"query_window": data["query_window"], "observed_at": observed}
+            if binding:
+                alias_key, alias = binding
+                self.store.put(db, "source_alias", alias_key, alias)
+                duplicate = self.store.get(db, "source_check", alias_key)
                 if duplicate:
-                    self.store.put(db, "source_check_alias_history", key, duplicate)
-                    self.store.delete(db, "source_check", key)
-                key, source = target, canonical["source"]
+                    self.store.put(db, "source_check_alias_history", alias_key, duplicate)
+                    self.store.delete(db, "source_check", alias_key)
             old = self.store.get(db, "source_check", key, {})
             if (started < old.get("started_at", 0) or
                     observation and started == old.get("started_at") and observation["observed_at"] < old.get("observed_at", 0)):

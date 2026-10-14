@@ -17,6 +17,9 @@ def arguments(runtime, action, data):
         and Views(runtime.home).record("interest", data["id"])
     ):
         kind, key = target(action, data)
+        if action == "source_check":
+            with runtime.store.transaction() as db:
+                key, _, _ = runtime.service.source_identity(data, db)
         if action == "interest_record":
             kind, key = "interest", data["id"]
         try:

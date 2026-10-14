@@ -112,6 +112,19 @@ class MemoryFeedback:
         with self.store.transaction() as db:
             if self.store.get(db, "memory_feedback", key):
                 return
+            # No memory bodies/target copies: destructive changes conservatively retire
+            # earlier unannounced saves, including same-turn replacements/deletions.
+            state = "unknown" if stale else classify(tool, result)
+            if not stale and state == "saved" and (
+                args.get("action") in {"replace", "remove", "delete", "edit", "batch"}
+                or isinstance(args.get("operations"), list)
+            ):
+                for previous in self.store.rows(db, "memory_feedback"):
+                    if (previous["session_id"] == session_id
+                            and previous["classified_state"] == "saved"
+                            and not previous.get("reply_ref") and not previous.get("invalidated")):
+                        previous.update(invalidated=True, revision=previous["revision"] + 1)
+                        self.store.put(db, "memory_feedback", previous["id"], previous)
             self.store.put(
                 db,
                 "memory_feedback",
@@ -122,7 +135,7 @@ class MemoryFeedback:
                     "turn_id": turn_id,
                     "tool_call_id": tool_call_id,
                     "tool": tool,
-                    "classified_state": "unknown" if stale else classify(tool, result),
+                    "classified_state": state,
                     "invalidated": stale,
                     "revision": 1,
                     "created": self.clock(),
@@ -146,12 +159,19 @@ class MemoryFeedback:
                     row["lifecycle_observed"] = True
                     self.store.put(db, "memory_feedback", row["id"], row)
 
+    @staticmethod
+    def informable(row, turn_id):
+        return not row.get("invalidated") and (
+            row["classified_state"] != "saved" or row["turn_id"] == turn_id
+        )
+
     def candidates(self, session_id):
+        current_turn = self.store.read("session", session_id, {}).get("turn_id")
         return [
             {k: r[k] for k in ("id", "revision", "classified_state", "tool")}
             for r in self.store.all("memory_feedback")
             if r["session_id"] == session_id
-            and not r.get("invalidated")
+            and self.informable(r, current_turn)
             and not r.get("reply_ref")
             and r["decision"] != "silent"
         ][-10:]
@@ -191,6 +211,13 @@ class MemoryFeedback:
                 raise DomainError(
                     "permission_denied", "Receipt unavailable in this session"
                 )
+            current_turn = self.store.get(db, "session", session_id, {}).get("turn_id")
+            # Check before idempotent replay: a previously valid inform decision is
+            # not authority to re-announce an obsolete save in a later turn.
+            if data["decision"] == "inform" and (
+                turn_id != current_turn or not self.informable(row, current_turn)
+            ):
+                raise DomainError("scope_closed", "Saved feedback is confined to its original current turn; obsolete receipts cannot be announced")
             signature = digest(json.dumps(data, sort_keys=True))
             old = self.store.get(db, "memory_feedback_request", request)
             if old:
@@ -245,6 +272,7 @@ class MemoryFeedback:
                     row["session_id"] == session_id
                     and row.get("inform_turn_id") == turn_id
                     and row["decision"] == "inform"
+                    and self.informable(row, self.store.get(db, "session", session_id, {}).get("turn_id"))
                     and not row.get("reply_ref")
                 ):
                     patterns = {

@@ -187,3 +187,11 @@ Rewrote the English and Chinese READMEs around the project's inspiration from Me
 ## 0.1.0
 
 Initial independent companion assembly: one Skill, four script-gated recurring jobs, five prompts, transactional operational state, goals/subgoals and expiring interests, reminder preparation and native delivery tracking, quiet upkeep, reflection/relationships, silent Feed operations, bounded research, profile-scoped initialization and documented native-remove cleanup. No mandatory external provider or core patch.
+
+### Independent acceptance followup (unreleased)
+
+- Restrict installation preparation to a whole, operation-matching Muse command.
+- Confine saved feedback to its original turn and invalidate superseded unannounced saves before replay.
+- Make audit packages parent-only while trusted child grants are unavailable; reject empty-evidence dispatch.
+- Resolve source aliases once through the shared service resolver so CAS protects the actual canonical row.
+- Document the unresolved Windows regression; no unsafe fallback or Windows acceptance claim.

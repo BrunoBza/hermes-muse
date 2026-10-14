@@ -14,9 +14,8 @@ def main():
         os.environ["HERMES_IGNORE_USER_CONFIG"] = "1"
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         result = unittest.TextTestRunner(verbosity=2).run(
-            unittest.defaultTestLoader.discover(
-                str(Path(__file__).parent), pattern="test_*.py"
-            )
+            unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:]) if sys.argv[1:]
+            else unittest.defaultTestLoader.discover(str(Path(__file__).parent), pattern="test_*.py")
         )
         raise SystemExit(not result.wasSuccessful())
 

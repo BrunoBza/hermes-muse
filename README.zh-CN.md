@@ -238,7 +238,7 @@ MIT 开源协议。
 
 Cron新建watch遵循cron.allow_agent_scheduling；本地goal登记不创建Cron。watch的prompt/stop各显式校验4,000字符，不静默截断；省略schedule默认每30分钟，明确更短/一次性原生schedule仍支持，未实施绝对30分钟底线，不改已有jobs。
 
-Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊重用户 delegation.* 的 provider/model/reasoning/concurrency；未覆盖时才由宿主采用父模型默认。研究/审计最多 3 并尊重更低限额，全部问题与审阅槽保留。新建重复 watch 至少 30 分钟，once 豁免；已有排程不追改。Cron 修改 feed_brief 不自唤醒。详见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
+Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊重用户 delegation.* 的 provider/model/reasoning/concurrency；未覆盖时才由宿主采用父模型默认。研究最多 3 并尊重更低限额；当前宿主没有可信审阅对象授权传递，审阅工作包由父任务直接读完整证据并审阅，不下发只有索引的空证据子任务，全部问题与审阅槽保留。新建重复 watch 至少 30 分钟，once 豁免；已有排程不追改。Cron 修改 feed_brief 不自唤醒。详见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
 
 
 ## 0.2.0 统一入口与页面
@@ -248,3 +248,7 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 所有 Muse 正文使用 content_read/content_write 与对象 ID，不要求模型知道私有路径，也不增加 Docker 的 Muse 挂载。可变动作使用 expected_revision 和稳定 request_id；冲突先回读，未知结果先核原执行。原生 memory、SOUL、skills 与 connector 不迁移。41 个动作及字段见 [INTERFACE](docs/INTERFACE.md)。
 
 有计划停用时，启用状态下调用 installation_prepare 保存逐任务续点并暂停经安装身份核验的任务，然后通过宿主原生入口停用/移除。普通卸载回调不暗中暂停任务。确认记忆时区分已保存、待批、提交未确认、失败、重复和未知；批准完成事件、provider 持久化证明、后台通知合并与所有直接停用路径清扫仍按公开宿主契约降级。
+
+独立验收修复：installation_prepare 只接受明确指向 Muse 且与 operation 匹配的当前整句命令，例如“请停用Muse插件”或“请卸载Muse插件”；引用、询问、否定、延后和无关删除不构成授权。旧 saved 回执只可在原回合告知，staged 跨轮仍是待确认。source_check 的 CAS 和实际更新共用 canonical 来源解析。
+
+**未解决的平台回归：** 当前 0.2.0 安全文件访问依赖 POSIX，尚未恢复原 Windows 支持。Windows CI 保留，未声称通过；需要安全的原生句柄适配，不能靠取消 symlink 检查降级。此版本仍未发布。

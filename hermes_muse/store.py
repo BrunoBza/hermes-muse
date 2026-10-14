@@ -110,7 +110,7 @@ class Store:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE")
             yield db
-            from .mutations import CURRENT_REQUEST
+            from .request_context import CURRENT_REQUEST
             if CURRENT_REQUEST.get():
                 from .content_io import check_cancelled
                 check_cancelled()
@@ -131,7 +131,7 @@ class Store:
         if kind in {"feed", "interest", "notification", "source_check", "operation_finding"} and isinstance(value, dict):
             old = Store.get(db, kind, key, {})
             value["_revision"] = old.get("_revision", 0) + 1
-            from .mutations import CURRENT_REQUEST
+            from .request_context import CURRENT_REQUEST
             if CURRENT_REQUEST.get():
                 value["_request_id"] = CURRENT_REQUEST.get()
             else:
@@ -196,7 +196,7 @@ class Store:
         return result
 
     def save_goal(self, record, body, *, expected_hash=None):
-        from .mutations import CURRENT_REQUEST
+        from .request_context import CURRENT_REQUEST
         if CURRENT_REQUEST.get():
             record["_request_id"] = CURRENT_REQUEST.get()
         else:

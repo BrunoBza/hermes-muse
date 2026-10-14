@@ -35,7 +35,7 @@ class AuditTests(OperationFixture):
         self.message(role='user', text='Inspect this file, do not change it')
         self.call('read', name='read_file', args={'path': 'example'})
         result = self.message(role='tool', text='head' + 'x' * 30000 + 'ACTUAL ERROR AT END', call_id='read')
-        batch = Audit(self.ops).batch()
+        Audit(self.ops).batch()
         receipt = self.store.read('meta', 'operation_wave')['pages'][0]['receipt']
         index = self.ops.evidence({'receipt': receipt})
         self.assertTrue(any(e['truncated'] for e in index['events']))
@@ -80,14 +80,22 @@ class AuditTests(OperationFixture):
         batch = audit.batch()
         request = {'tasks':[batch['assignments'][0]['task']]}
         calls = []
-        result = audit.dispatch(request, lambda: calls.append('launch') or {'status':'dispatched','delegation_id':'original'}, session_id='parent', tool_call_id='call')
-        self.assertEqual(result['delegation_id'],'original')
-        with self.assertRaisesRegex(ValueError,'original dispatch'):
-            audit.dispatch(request, lambda: calls.append('duplicate') or {})
-        saved = audit.batch()
-        self.assertFalse(saved['assignments'])
-        self.assertEqual(saved['pending_owners'][0]['owner_id'],'original')
-        self.assertEqual(calls,['launch'])
+        self.assertFalse(batch['assignments'][0]['dispatchable'])
+        self.assertEqual(batch['assignments'][0]['review_mode'], 'parent')
+        self.assertNotIn('Call muse_manage operations_evidence', request['tasks'][0]['goal'])
+        with self.assertRaisesRegex(ValueError, 'Parent-only'):
+            audit.dispatch(request, lambda: calls.append('launch') or {})
+        receipt = batch['assignments'][0]['receipt']
+        for state in ('pending', 'active', 'unknown', 'finished'):
+            self.store.write('operation_dispatch', receipt,
+                             {'id': receipt, 'state': state, 'owner_id': 'original'})
+            with self.assertRaisesRegex(ValueError, 'original dispatch'):
+                audit.dispatch(request, lambda: calls.append('duplicate') or {})
+            saved = audit.batch()
+            self.assertFalse(saved['assignments'])
+            self.assertEqual(saved['pending_owners'][0]['owner_id'], 'original')
+        self.assertFalse(calls)
+
 
 
 if __name__ == '__main__':

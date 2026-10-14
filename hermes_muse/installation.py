@@ -1,8 +1,21 @@
 """Explicit preparation only; ordinary unload never pauses host jobs."""
 
+import re
+
 from .content_io import DomainError, revision
 from .host import file_lock, profile_scope
 from .views import Views, canonical
+
+
+def explicit_request(text, operation):
+    """A deliberately narrow whole-message imperative, not inferred NL intent."""
+    verbs = {"disable": ("disable", "停用|禁用"),
+             "remove": ("remove|uninstall", "卸载|移除")}
+    english, chinese = verbs[operation]
+    target = r"(?:hermes-muse|muse)(?:\s+plugin)?"
+    en = rf"(?:please\s+)?(?:{english})\s+(?:the\s+)?{target}(?:\s+now)?[.!]?"
+    zh = rf"(?:现在)?(?:请)?(?:帮我)?(?:{chinese})\s*(?:hermes-muse|muse)\s*(?:插件)?(?:现在|立即)?[。！!]?"
+    return bool(re.fullmatch(en, text.strip(), re.I) or re.fullmatch(zh, text.strip(), re.I))
 
 
 def prepare(runtime, data, session_id, turn_id):
@@ -21,19 +34,12 @@ def prepare(runtime, data, session_id, turn_id):
         raise DomainError(
             "permission_denied", "Preparation requires this current user turn"
         )
-    import re
-
-    if re.search(r"(?i)do not|don.t|not now|不要|别|暂不|不得", signal["text"]):
+    if signal["session_id"] != session_id or not explicit_request(signal["text"], data["operation"]):
         raise DomainError(
             "permission_denied",
-            "A negative or deferred request is not disable authority",
-        )
-    if signal["session_id"] != session_id or not any(
-        word in signal["text"].lower()
-        for word in ("disable", "remove", "停用", "禁用", "卸载", "移除")
-    ):
-        raise DomainError(
-            "permission_denied", "Current user must explicitly request disable/remove"
+            "Use an explicit current-profile Muse command matching operation: "
+            "'Please disable Muse now.' / 'Please uninstall Muse now.' / '请停用Muse插件' / '请卸载Muse插件'. "
+            "Quoted, conditional, deferred and instructional questions do not authorize preparation.",
         )
     signature = revision(canonical(data))
     with profile_scope(runtime.home), file_lock(store.path("install.lock")):

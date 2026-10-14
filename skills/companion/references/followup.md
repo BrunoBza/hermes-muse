@@ -36,7 +36,7 @@ kind=evidence, receipt_id reads only the exact native tool message identified by
 
 Normal callbacks take priority. Missing callbacks use the existing tick with 30m, 2h, then 8h checks. No change means no user notice. After a day without a new terminal outcome the fallback pauses for review; a real user/owner event may request another read. Do not repeatedly probe a review blocker from Cron. A long consolidating owner can remain active; provide current evidence/ETA rather than a success claim.
 
-Paseo tools expose agent-level lifecycle but this installation has no verified per-prompt receipt adapter. Preserve daemon/agent/workspace references through external_ref and their real tools; owner-level idle/completed is not this attempt's business result. Arbitrary terminal stdout/exit0 is never parsed into a remote owner. Do not install another provider, create another session or replace the original owner as recovery.
+An existing external tool may expose owner-level lifecycle without a verifiable per-attempt receipt. Preserve its references through external_ref and the original authorized tool; owner-level idle/completed is not this attempt's business result. Arbitrary terminal stdout/exit0 is never parsed into a remote owner. Do not install another provider, create another session or replace the original owner as recovery.
 
 ## Verification, continuation and user blockers
 

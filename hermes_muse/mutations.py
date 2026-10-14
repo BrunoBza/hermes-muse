@@ -1,9 +1,7 @@
 """Tool-bound semantic CAS and replay journal; internal services keep their guards."""
 
 import json
-from contextvars import ContextVar
-
-CURRENT_REQUEST = ContextVar("muse_mutation_request", default=None)
+from .request_context import CURRENT_REQUEST
 from .contracts import CAS, CREATES, validate
 from .content_io import DomainError, revision, check_cancelled
 from .views import Views, canonical
@@ -23,16 +21,8 @@ def target(action, data):
 
         return kind, digest("|".join(sorted(data.get("evidence", []))))
     if action == "source_check":
-        from .store import digest
-
-        return kind, "source-" + digest(
-            json.dumps(
-                data.get("source"),
-                sort_keys=True,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
+        # Canonical identity depends on stored aliases; resolve under the write lock.
+        return kind, None
     return kind, "current" if action == "preferences" else data.get("id")
 
 
@@ -143,6 +133,9 @@ def invoke(runtime, args, kwargs, callback):
     journal = revision(canonical([views.scope(), action, data["request_id"]]))
     signature = revision(canonical(data))
     with file_lock(runtime.store.path("mutations.lock")):
+        if action == "source_check":
+            with runtime.store.transaction() as db:
+                key, _, _ = runtime.service.source_identity(data, db)
         old = runtime.store.read("mutation_request", journal)
         if old:
             if old["signature"] != signature:

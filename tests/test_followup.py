@@ -86,6 +86,9 @@ class FollowupTests(unittest.TestCase):
             data.setdefault("request_id", uuid.uuid4().hex)
         if action in CAS:
             kind, key = target(action, data)
+            if action == "source_check":
+                with self.runtime.store.transaction() as db:
+                    key, _, _ = self.runtime.service.source_identity(data, db)
             try: data.setdefault("expected_revision", object_state(Views(self.home),kind,key)[2])
             except ValueError: data.setdefault("expected_revision", "absent")
         result = json.loads(self.runtime.handle({"action": action, "data": data},
