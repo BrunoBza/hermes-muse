@@ -4,14 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from .service import Companion, DEFAULT_PREFERENCES
+from .service import Companion
 from .store import GOVERNANCE_JOBS, PLUGIN, VERSION, Store, epoch, stamp
 
 JOBS = {"proactive-watch": "*/30 * * * *", "memory-upkeep": "0 * * * *",
@@ -30,30 +29,7 @@ def profile_scope(home):
         reset_hermes_home_override(token)
 
 
-@contextmanager
-def file_lock(path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise ValueError("Lock file must not be a symlink")
-    with path.open("a+b") as handle:
-        if os.name == "nt":
-            import msvcrt
-            if handle.tell() == 0:
-                handle.write(b"0")
-                handle.flush()
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            if os.name == "nt":
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+from .locks import file_lock
 
 
 class HermesHost:
@@ -102,7 +78,7 @@ class HermesHost:
         return path.name
 
     def _owned_job(self, key, options, *, owner=None, item=None, fixed=False, expires=None):
-        from cron.jobs import create_job, get_job, list_jobs, update_job
+        from cron.jobs import create_job, list_jobs, update_job
         with profile_scope(self.home), file_lock(self.store.path("install.lock")):
             record = self.manifest()
             marker = f"[hermes-muse:{record['installation_id']}:{key}]"
@@ -129,7 +105,6 @@ class HermesHost:
             return job
 
     def initialize(self):
-        from cron.jobs import create_job
         from hermes_cli.plugins import PluginContext
         if not callable(getattr(PluginContext, "register_system_prompt_section", None)):
             raise RuntimeError("Hermes lacks register_system_prompt_section; update Hermes")
@@ -207,7 +182,6 @@ class HermesHost:
     def current_delivery(self, task_id):
         """Bind a prepared notice to the host-supplied, currently running Cron attempt."""
         from cron.executions import get_execution
-        from cron.jobs import get_job
         parts = str(task_id or "").split(":", 2)
         if len(parts) != 3 or parts[0] != "cron":
             return None
@@ -217,7 +191,7 @@ class HermesHost:
         if key not in ("proactive-watch", *GOVERNANCE_JOBS) and not key.startswith("watch-"):
             return None
         with profile_scope(self.home):
-            job, execution = get_job(job_id), get_execution(execution_id)
+            job, execution = self.owned_job(job_id), get_execution(execution_id)
         if (not job or job.get("deliver") in (None, "local") or not execution
                 or execution.get("job_id") != job_id or execution.get("status") != "running"):
             return None
@@ -236,6 +210,10 @@ class HermesHost:
         from .store import bounded
         prompt_text = bounded(data.get("prompt"), 4000)
         stop = bounded(data.get("stop_condition"), 4000)
+        from .scheduling import validate_watch
+        validate_watch(data.get("schedule", "every 30m"))
+        if self.manifest().get("preparation"):
+            raise ValueError("Installation is prepared for disable/remove; no new watch allowed")
         key = "watch-" + uuid.uuid4().hex[:12]
         prompt = ("Read hermes-muse:companion including its execution/recovery and communication procedures, and muse_manage context. Work only on goal " + goal["id"] + ". "
                   "Check its status and your stop condition first. Prepare evidence with notification_add. "
@@ -243,22 +221,38 @@ class HermesHost:
                   "As your last step call notification_prepare and return its final_response exactly; "
                   "this job delivers that response. With nothing approved return [SILENT].\n"
                   + prompt_text + "\nStop condition: " + stop)
-        return self._owned_job(key, {"name": "muse-" + key, "schedule": data.get("schedule", "every 30m"), "prompt": prompt,
+        job = self._owned_job(key, {"name": "muse-" + key, "schedule": data.get("schedule", "every 30m"), "prompt": prompt,
                                    "skills": [f"{PLUGIN}:companion"], "deliver": "bot-chat"}, owner=goal["id"], expires=expires)
+        with file_lock(self.store.path("install.lock")):
+            manifest = self.manifest()
+            manifest["jobs"][job["id"]]["stop_condition"] = stop
+            self.save_manifest(manifest)
+        return job
+
+    def owned_job(self, job_id):
+        from cron.jobs import get_job
+        manifest = self.manifest()
+        owned = manifest["jobs"].get(job_id, {})
+        marker = owned.get("marker", "")
+        with profile_scope(self.home):
+            job = get_job(job_id)
+        if (not marker.startswith("[hermes-muse:" + manifest["installation_id"] + ":") or not job
+                or marker not in job.get("prompt", "") or job.get("workdir") != str(self.store.root)):
+            return None
+        return job
 
     def is_active_watch(self, job_id, goal_id):
-        from cron.jobs import get_job
         record = self.manifest()["jobs"].get(job_id)
         if not record or not record["key"].startswith("watch-") or record.get("owner") != goal_id:
             return False
         if record.get("expires") is not None and record["expires"] <= time.time():
             return False
         with profile_scope(self.home):
-            job = get_job(job_id)
+            job = self.owned_job(job_id)
         return bool(job and job.get("enabled"))
 
     def pause_owner(self, owner):
-        from cron.jobs import pause_job, get_job
+        from cron.jobs import pause_job
         with profile_scope(self.home):
             for job_id, record in self.manifest()["jobs"].items():
                 if record.get("owner") != owner:
@@ -267,13 +261,13 @@ class HermesHost:
                     row = self.store.read("notification", record["item"], {})
                     if row.get("final_result"):
                         continue
-                if get_job(job_id):
+                if self.owned_job(job_id):
                     pause_job(job_id, reason="Hermes Muse: owning goal closed")
 
     def stop_watch(self, job_id):
         from cron.jobs import pause_job
         owned = self.manifest()["jobs"].get(job_id)
-        if not owned or not owned["key"].startswith("watch-"):
+        if not owned or not owned["key"].startswith("watch-") or not self.owned_job(job_id):
             raise ValueError("Not a plugin-owned watch")
         with profile_scope(self.home):
             return pause_job(job_id, reason="Hermes Muse: watch completed or cancelled")
@@ -313,6 +307,8 @@ class HermesHost:
             else:
                 status = "unknown"  # including partial sends/timeouts: never blindly replay
             row_before_status = row["status"]
+            if status == "failed" and row_before_status == "queued" and not row.get("output_finalized"):
+                row["definitive_not_accepted"] = True
             row.update(status=status, execution_id=execution["id"], delivery_outcome=outcome,
                        delivery_note="Native transport report; not a phone display/read receipt.")
             with self.store.transaction() as db:
@@ -320,6 +316,9 @@ class HermesHost:
                 if current and current["status"] == row_before_status:
                     self.store.put(db, "notification", row["id"], row)
             updates.append(row)
+        from .delivery import apply_notice
+        for evidence in self.store.all("notification"):
+            apply_notice(self.store, evidence, time.time())
         return updates
 
     def bot_delivery_status(self, job_id, execution_id=None):

@@ -1,3 +1,10 @@
+# 0.2.0 — approved implementation (unreleased)
+
+- Scoped content tools, explicit CAS/request keys, pure read projections and plugin-owned UI.
+- Correlated memory feedback, current audit identities and replayable delivery evidence.
+- Explicit installation preparation, public native delegation, conservative watch minimum and Cron wake protection.
+- Breaking tool response migration: feed_list returns a paginated object; mutable actions require revision/request keys. See docs/INTERFACE.md.
+
 # Changelog
 
 ## 0.1.27 catalog compatibility

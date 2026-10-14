@@ -7,3 +7,6 @@ dist/
 build/
 .coverage
 .hermes-core/
+
+!dashboard/dist/
+!dashboard/dist/index.js

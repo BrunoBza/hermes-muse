@@ -15,11 +15,11 @@ class Runs:
             return None
         _, job_id, execution_id = parts
         job = self.host.manifest()["jobs"].get(job_id, {}).get("key")
-        if job not in {"memory-upkeep", "nightly-review", "proactive-watch", "feed-pulse", *GOVERNANCE_JOBS}:
+        if job not in {"memory-upkeep", "nightly-review", "proactive-watch", "feed-pulse", *GOVERNANCE_JOBS} and not str(job).startswith("watch-"):
+            return None
+        if not self.host.owned_job(job_id):
             return None
         old = self.store.read("run", execution_id)
-        if old:
-            return old
         path = self.store.home / "cron/executions.db"
         if not path.exists():
             return None
@@ -27,6 +27,8 @@ class Runs:
             execution = db.execute("SELECT * FROM executions WHERE id=?", (execution_id,)).fetchone()
         if not execution or execution["job_id"] != job_id or execution["status"] != "running":
             return None
+        if old:
+            return old
         row = {"id": execution_id, "job_id": job_id, "job": job,
                "started": epoch(execution["started_at"] or execution["claimed_at"]),
                "status": "running", "stages": {}}
@@ -66,6 +68,12 @@ class Runs:
                     raise ValueError("Finish this run's review_complete checkpoint first")
                 if row["job"] == "memory-upkeep" and not stages.get("operations", {}).get("complete"):
                     raise ValueError("Operation review is unfinished; preserve its checkpoint and report partial")
+                if row["job"] in GOVERNANCE_JOBS:
+                    from .content_io import Files, revision
+                    raw = Files(self.store.home).read(f"workspace/reviews/{row['id']}.md")
+                    if not raw.strip():
+                        raise ValueError("Save this governance run's full review_report before completion")
+                    stages["report"] = {"id": row["id"], "revision": revision(raw), "at": self.clock()}
                 if row["job"] == "nightly-review":
                     day = self.host.local_now(row["started"]).date().isoformat()
                     paths = [f"dreams/{day}.md", "dreams/alignment/derived/ALIGNMENT_SYNTHESIS.md"]

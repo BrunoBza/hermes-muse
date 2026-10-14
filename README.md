@@ -108,7 +108,7 @@ Delegates are instructed to remain read-only under inherited host permissions; t
 
 The plugin does not pin a model or provider on its recurring jobs. Hermes resolves the model at each run: **per-job model → current profile’s `cron.model` → profile’s main model**. Without a Cron default, hourly background work can use the same expensive model as your main conversation. Set a background model before leaving the scheduler running.
 
-Muse Cron uses public delegation when configuration establishes parent-route parity; native stateless Cron joins results. Configured/unknown route conflicts retain an explicit legacy private parent-routing exception, pending a public scoped API; this request is not fully resolved. Ordinary chat keeps native delegation settings. Research/audit allocate at most three workers within lower user limits, preserving every question/page. No global configuration changes. See [exact boundaries](docs/CATALOG-COMPATIBILITY.md).
+Muse workers always use public native delegation, respecting the user’s delegation provider/model/reasoning/concurrency settings. The parent is only the unconfigured default; native stateless Cron joins results. Research/audit allocate at most three workers within lower user limits, preserving every question/page. No global configuration changes. See [exact boundaries](docs/CATALOG-COMPATIBILITY.md).
 
 For example, merge this into the current profile’s `config.yaml`, using a model and provider available in your installation (`llm` here is a configured provider name):
 
@@ -242,4 +242,17 @@ MIT licensed.
 
 ## Conversation preview and scheduling policy
 
-Recent conversation context uses bounded previews with complete revision-checked paging; partial evidence blocks task-notice approval. See the [conversation procedure](skills/companion/references/conversations.md). Cron watch creation respects `cron.allow_agent_scheduling`; local goal registration creates no job. New watch prompt/stop fields each allow 4,000 characters without truncation. Omitted cadence defaults to 30 minutes; explicit shorter and one-off native schedules remain supported. No absolute 30-minute floor or existing-job rewrite is claimed.
+Recent conversation context uses bounded previews with complete revision-checked paging; partial evidence blocks task-notice approval. See the [conversation procedure](skills/companion/references/conversations.md). Cron watch creation respects `cron.allow_agent_scheduling`; local goal registration creates no job. New watch prompt/stop fields each allow 4,000 characters without truncation. New repeating watches must provably remain at least 30 minutes apart; one-off schedules are exempt. Existing jobs and user schedule edits are preserved.
+
+
+## Scoped tools and plugin pages (0.2.0)
+
+Muse includes Dashboard and Desktop pages for the complete Feed, topics, ideas and goals. APIs are authenticated by Hermes and check the requested profile on every GET. Browsing creates no read state or model work. Desktop changes start as a draft in a selected originating chat; the user sends it through normal tool authorization. Install the same package on the Desktop device to obtain its entry; a remote backend install alone does not install the client entry.
+
+Use `muse_manage` for every Muse business object, locally or from a container. No new Muse bind mount is needed. `skill_view` provides instructions; it does not perform storage. See [all 41 actions](docs/INTERFACE.md) and [content usage](skills/companion/references/content.md). Read an object to obtain its revision; supply expected_revision and a stable request_id when changing it. Conflict means reread/merge. Unknown outcome means inspect the original operation, never repeat it with a new key.
+
+Before planned disable/removal, call installation_prepare with the original user signal, current installation revision and request key while the plugin remains enabled. It pauses only verified owned jobs and returns requires_host_action; then use Hermes native disable/remove. Direct disable makes remaining launchers harmless but cannot promise automatic task cleanup. Data and user-paused jobs remain preserved.
+
+Workers use public native delegation and respect delegation.* routing/reasoning/concurrency. New repeating watches are at least 30 minutes; ambiguous cron patterns are refused, once is exempt, existing schedules remain. Cron Feed-brief edits wait for the next existing tick.
+
+Memory acknowledgements follow actual receipts: saved, waiting approval, submitted but unconfirmed, failed, unchanged or unknown. The plugin stores only minimal correlation references. Approval completion, provider durability and automatic background-event merging remain host/provider contract limits; no core patches or new daemons are installed.

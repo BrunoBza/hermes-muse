@@ -91,8 +91,8 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(500,len(self.store.all('signal')))
 
     def test_audit_caps_assigned_workers_without_discarding_saved_pages(self):
-        wave={'number':1,'through':900,'pages':[{'slot':n,'events':1,'executions':0,'receipt':str(n),'reviewed':False} for n in (1,2,3)]}
-        audit=Audit(SimpleNamespace(store=self.store))
+        wave={'number':1,'done':False,'through':900,'pages':[{'slot':n,'events':1,'executions':0,'receipt':str(n),'reviewed':False} for n in (1,2,3)]}
+        audit=Audit(SimpleNamespace(store=self.store, checkpoint=lambda:{"message_id":0}, clock=lambda:self.now))
         with patch('hermes_muse.delegation.settings',return_value={'max_concurrent_children':1}):
             result=audit.public(wave)
         self.assertEqual([1],[x['slot'] for x in result['assignments']]);self.assertEqual(3,len(wave['pages']))

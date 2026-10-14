@@ -10,3 +10,7 @@ Do not apply edits to SOUL, system configuration, memory, skills, user files or 
 Read operation_review findings and use the self-review procedure for focused evidence when needed. Check recurring mistakes, verified repairs and unresolved user impact; proposals remain proposals. Do not claim a full operation audit from a job status or invent errors to populate this review.
 
 Use focused native evidence and existing findings, not another full operation-backlog scan. After saving review_complete, call run_complete with outcome=complete and summary, or outcome=partial with specific gaps and recovery steps, before returning the report.
+
+Access all Muse bodies through content_read/content_write with object IDs and explicit revisions/request keys (companion references/content.md), never direct file edits. Native memory/skills and authorized connector tools retain ownership. Adapt source and relationship work to this profile’s role; do not invent personal inbox/calendar obligations. Keep existing applicable source coverage, including the full rolling 30-day calendar, and notification budget.
+
+Save the complete 7-day/30-day report as content_write(kind=review_report,id=<current host-bound run id>) before run_complete. The report is advisory evidence, not authority to execute recommendations.

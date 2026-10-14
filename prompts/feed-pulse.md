@@ -10,3 +10,5 @@ Call review_complete(job=feed-pulse, up_to=processing start time, summary=...) a
 Check your own article, sources and writes directly; do not scan the shared operation backlog. After review_complete call run_complete with outcome=complete and summary, or outcome=partial with concrete gaps and recovery steps. No new worthwhile article is a valid completed result after research; explain that judgment in the summary.
 
 Read task_runs for this job's preceding partial result. Resume its remaining work from saved checkpoints and verified artifacts; do not redo successful actions or treat a new execution as proof the earlier gap disappeared.
+
+Access all Muse bodies through content_read/content_write with object IDs and explicit revisions/request keys (companion references/content.md), never direct file edits. Native memory/skills and authorized connector tools retain ownership. Adapt source and relationship work to this profile’s role; do not invent personal inbox/calendar obligations. Keep existing applicable source coverage, including the full rolling 30-day calendar, and notification budget.

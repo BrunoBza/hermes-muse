@@ -1,12 +1,12 @@
 ---
 name: companion
 description: Manage goals and expiring interests, proactive reminders, feedback, memory and relationships, nightly alignment, silent Feed and bounded parallel research using the current Hermes profile.
-version: 0.1.27
+version: 0.2.0
 ---
 
 # Companion
 
-This is the single Skill registered as `hermes-muse:companion`. It adds procedures around Hermes; existing tools, permissions, language and memory remain authoritative. All paths are relative to the Muse workspace supplied by the injected system section or `muse_manage context`.
+This is the single Skill registered as `hermes-muse:companion`. It adds procedures around Hermes; existing tools, permissions, language and memory remain authoritative. Read references/content.md for object IDs, scoped content actions, versions and retries. Skills teach the tools; they do not perform IO.
 
 ## Choose a procedure
 

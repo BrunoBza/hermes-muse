@@ -8,7 +8,7 @@ import time
 from contextvars import ContextVar
 from pathlib import Path
 
-from .store import DAY, Store, bounded, digest, epoch, identifier, is_background_message
+from .store import DAY, Store, bounded, digest, epoch, identifier
 
 TURN_KIND = "followup_turn"
 RECEIPT_KIND = "followup_receipt"
@@ -24,7 +24,7 @@ INSTRUCTION = (
     "goals inspect the exact owner (kind=observe), verify original criteria (kind=verification), "
     "then inspect actual reply_refs before delivering through the existing notification/original reply flow (kind=handoff). "
     "Missing receipt is not proof of no dispatch: never repeat unknown writes. Resolve newer user input/cancellation before acting. "
-    "For external_ref goals use their existing authoritative tools; no native/Paseo attempt is inferred. "
+    "For external_ref goals use their existing authoritative tools; no native execution owner is inferred. "
     "Preserve this job's full source sweep, quiet hours "
     "and notification policy; do not create a followup Cron or poll continuously."
 )
@@ -83,7 +83,7 @@ def snapshot(home, *, now=None, session_id=None, offset=0, exclude_turn=None, ro
             db = sqlite3.connect((root / "state.db").as_uri() + "?mode=ro", uri=True)
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
-            for kind in (TURN_KIND, RECEIPT_KIND, REPLY_KIND):
+            for kind in (TURN_KIND, RECEIPT_KIND, REPLY_KIND, "notification"):
                 records[kind] = [json.loads(r[0]) for r in db.execute(
                     "SELECT data FROM records WHERE kind=? ORDER BY id", (kind,))]
         turns = [r for r in records.get(TURN_KIND, []) if r["disposition"] in {"pending", "needs_clarification"}
@@ -113,6 +113,12 @@ def snapshot(home, *, now=None, session_id=None, offset=0, exclude_turn=None, ro
             if not fu or goal["status"] == "cancelled" or (session_id and goal.get("session_id") != session_id):
                 continue
             if fu["delivery_state"] in {"confirmed", "suppressed"}:
+                continue
+            from .delivery import valid_basis, inferred_basis
+            legacy = inferred_basis(Path(home), goal, records, now)
+            if legacy:
+                fu = {**fu, "delivery_basis": legacy}
+            if fu["delivery_state"] in {"unknown", "queued"} and valid_basis(fu, records):
                 continue
             owner_id = (fu.get("owner") or {}).get("id")
             if callback_owner and owner_id and owner_id != callback_owner:
@@ -244,7 +250,7 @@ class Followups:
                 if msg.get("role") == "assistant" and msg.get("content") == response and isinstance(msg.get("_row_id"), int):
                     message_id = msg["_row_id"]
                     break
-            if response and any(g.get("followup") and g.get("session_id") == session_id and g["status"] != "cancelled" for g in self.store.goals()):
+            if response and (any(g.get("followup") and g.get("session_id") == session_id and g["status"] != "cancelled" for g in self.store.goals()) or any(r.get("session_id") == session_id for r in Store.rows(db, "memory_feedback"))):
                 Store.put(db, REPLY_KIND, key, {"id": key, "session_id": session_id, "turn_id": turn_id,
                     "assistant_hash": digest(response), "message_id": message_id, "observed_at": self.service.clock()})
             if not row:
@@ -292,7 +298,7 @@ class Followups:
             if data.get("goal_id"):
                 goal, _, fingerprint = self._goal(data["goal_id"])
                 return {"goal_id": goal["id"], "status": goal["status"], "followup": goal.get("followup"),
-                        "fingerprint": fingerprint, "path": str(self.store.path(f"workspace/goals/{goal['id']}/GOAL.md"))}
+                        "fingerprint": fingerprint, "content_ref": {"kind": "goal", "id": goal["id"]}}
             if data.get("receipt_id"):
                 receipt = self.store.read(RECEIPT_KIND, data["receipt_id"])
                 if not receipt:
@@ -399,7 +405,7 @@ class Followups:
                         intent["scope_revision"] = fu["scope_revision"]
                         Store.put(db, INTENT_KIND, intent["id"], intent)
                 fu.update(execution_state="waiting_external" if fu.get("owner") else "outcome_unknown" if fu.get("intent_id") else "planned",
-                          result_state="unverified", receipt_id=None, delivery_state="open", notice_id=None, reply_id=None, delivery_ref=None,
+                          result_state="unverified", receipt_id=None, delivery_basis=None, delivery_state="open", notice_id=None, reply_id=None, delivery_ref=None,
                           blocker_class="review_required" if fu.get("intent_id") and not fu.get("owner") else None, recovery_attempted=False)
             elif kind == "advance":
                 receipt = Store.get(db, RECEIPT_KIND, fu.get("receipt_id"), {})
@@ -423,8 +429,8 @@ class Followups:
                 fu.update(execution_state=state, blocker_class="needs_user" if state == "needs_user" else "review_required",
                           blocker_reason=bounded(data.get("reason"), 2000))
             elif kind == "verification":
-                if goal.get("external_ref") and data.get("external_status_verified") is not True:
-                    raise ValueError("Read the authoritative external task/owner first; completed labels alone are insufficient")
+                from .evidence import resolve
+                resolved = resolve(self.service, data.get("evidence_refs"), goal)
                 result = data.get("result_state")
                 if result not in {"verified", "failed"}:
                     raise ValueError("Verification must be verified/failed")
@@ -442,22 +448,59 @@ class Followups:
                 if result == "verified" and receipt.get("failed"):
                     raise ValueError("Native failure cannot be verified successful")
                 fu.update(result_state=result, execution_state="finished", blocker_class=None,
-                          verification={"sources": refs, "verified_at": verified,
+                          verification={"sources": refs, "evidence_refs": resolved, "verified_at": verified,
                                         "summary": bounded(data.get("summary"), 2000)})
             elif kind == "handoff":
                 if fu["result_state"] != "verified":
                     raise ValueError("Verify the accepted result before handoff")
+                refs = [name for name in ("reply_id", "notice_id", "retry_failed_notice_id") if data.get(name)]
+                if len(refs) != 1:
+                    raise ValueError("Handoff requires exactly one reply, notice or proven-failure retry reference")
+                if data.get("retry_failed_notice_id"):
+                    failed = Store.get(db, "notification", data["retry_failed_notice_id"], {})
+                    if (failed.get("goal_id") != goal["id"] or failed.get("followup_scope_revision") != fu["scope_revision"]
+                            or failed.get("status") != "failed" or not failed.get("definitive_not_accepted")):
+                        raise ValueError("Retry requires this scope's trusted proof that transport did not accept the original send")
+                    if fu.get("retry_failed_notice_id") == failed["id"]:
+                        return fu
+                    fu.update(retry_failed_notice_id=failed["id"], delivery_state="open", notice_id=None,
+                              delivery_basis=None, blocker_class=None)
+                    self._save(goal, body, fingerprint)
+                    return fu
                 if data.get("reply_id"):
                     reply = Store.get(db, REPLY_KIND, data["reply_id"], {})
                     if reply.get("session_id") != goal["session_id"] or reply.get("observed_at", 0) < fu.get("source_created_at", goal["created"]):
                         raise ValueError("Reply must belong to this accepted source session and follow the original user request")
+                    history = self.service.host.conversation(reply["session_id"], reply["observed_at"] - 5)
+                    from .delivery import reply_evidence
+                    readable, relevant = reply_evidence(goal, reply, history)
+                    if readable and not relevant:
+                        raise ValueError("Reply does not contain this verified result or artifact reference")
+                    if relevant:
+                        from .delivery import basis
+                        new_basis = basis(fu, "reply", reply["id"], "recorded_unconfirmed", self.service.clock())
+                        if all((fu.get("delivery_basis") or {}).get(k) == v for k,v in new_basis.items() if k != "noted_at"):
+                            return fu
+                        fu["delivery_basis"] = new_basis
                     fu.update(reply_id=reply["id"], delivery_state="unknown", blocker_class="delivery_unknown",
                               delivery_note=bounded(data.get("reason"), 2000))
+                    checks = fu.get("delivery_checks", 0) + 1
+                    fu["delivery_checks"] = checks
+                    fu["next_check_at"] = self.service.clock() + (1800 if checks == 1 else 7200 if checks == 2 else 28800)
+                    if not relevant and checks >= 3:
+                        fu["blocker_class"] = "review_required"
                     self._save(goal, body, fingerprint)
                     return fu
                 notice = Store.get(db, "notification", data.get("notice_id"), {})
                 if (not notice or notice.get("goal_id") != goal["id"] or not notice.get("final_result")):
                     raise ValueError("Use this goal's actual final-result notification")
+                if notice.get("followup_scope_revision") != fu["scope_revision"] or notice.get("followup_verified_at") != fu.get("verification", {}).get("verified_at"):
+                    raise ValueError("Notice belongs to a different scope or verification version")
+                from .delivery import basis
+                new_basis = basis(fu, "notice", notice["id"], notice["status"], self.service.clock())
+                if all((fu.get("delivery_basis") or {}).get(k) == v for k,v in new_basis.items() if k != "noted_at"):
+                    return fu
+                fu["delivery_basis"] = new_basis
                 status = notice["status"]
                 fu.update(notice_id=notice["id"], delivery_state=(
                     "confirmed" if status == "sent" else "unknown" if status in {"unknown", "failed", "cancelled"}

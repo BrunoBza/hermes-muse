@@ -6,13 +6,12 @@ import json
 import os
 import re
 import sqlite3
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.1.27"
+VERSION = "0.2.0"
 PLUGIN = "hermes-muse"
 DAY = 86400
 GOVERNANCE_JOBS = ("weekly-governance-review", "monthly-system-audit")
@@ -86,6 +85,11 @@ class Store:
         os.chmod(self.root / "state.db", 0o600)
 
     def path(self, relative):
+        candidate = self.root
+        for component in Path(relative).parts:
+            candidate = candidate / component
+            if candidate.is_symlink():
+                raise ValueError("Muse paths must not follow symbolic links")
         path = (self.root / relative).resolve()
         if not path.is_relative_to(self.root.resolve()) or path == self.root:
             raise ValueError("Path escapes the Muse workspace")
@@ -93,12 +97,23 @@ class Store:
 
     @contextmanager
     def transaction(self):
+        from .locks import file_lock
+        with file_lock(self.root / "mutations.lock"):
+            with self._transaction() as db:
+                yield db
+
+    @contextmanager
+    def _transaction(self):
         db = sqlite3.connect(self.root / "state.db", timeout=15, isolation_level=None)
         try:
             db.execute("PRAGMA busy_timeout=15000")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE")
             yield db
+            from .mutations import CURRENT_REQUEST
+            if CURRENT_REQUEST.get():
+                from .content_io import check_cancelled
+                check_cancelled()
             db.commit()
         except BaseException:
             db.rollback()
@@ -113,6 +128,14 @@ class Store:
 
     @staticmethod
     def put(db, kind, key, value):
+        if kind in {"feed", "interest", "notification", "source_check", "operation_finding"} and isinstance(value, dict):
+            old = Store.get(db, kind, key, {})
+            value["_revision"] = old.get("_revision", 0) + 1
+            from .mutations import CURRENT_REQUEST
+            if CURRENT_REQUEST.get():
+                value["_request_id"] = CURRENT_REQUEST.get()
+            else:
+                value.pop("_request_id", None)
         db.execute("INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", (kind, key, json.dumps(value, ensure_ascii=False, allow_nan=False)))
 
     @staticmethod
@@ -137,35 +160,24 @@ class Store:
             return self.rows(db, kind)
 
     def write_text(self, relative, content, *, create_only=False, expected_hash=None):
-        path = self.path(relative)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if create_only:
-            try:
-                with path.open("x", encoding="utf-8") as handle:
-                    handle.write(content)
-                os.chmod(path, 0o600)
-            except FileExistsError:
-                pass
-            return path
-        fd, temporary = tempfile.mkstemp(prefix=".muse-", dir=path.parent)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            if expected_hash is not None and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
-                raise ValueError("File changed concurrently; preserve the user's edit and reread")
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-        return path
+        from .content_io import Files, revision
+        from .locks import file_lock
+        files = Files(self.home)
+        with file_lock(self.root / "mutations.lock"):
+            try: old = files.read(relative)
+            except FileNotFoundError: old = None
+            if create_only and old is not None:
+                return self.root / relative
+            expected = expected_hash if expected_hash is not None else revision(old) if old is not None else "absent"
+            files.replace(relative, content.encode("utf-8"), expected)
+        return self.root / relative
 
     def goal(self, key, *, with_fingerprint=False):
         path = self.path(f"workspace/goals/{identifier(key)}/GOAL.md")
         if not path.exists():
             raise ValueError(f"Unknown goal: {key}")
-        raw = path.read_bytes()
+        from .content_io import Files
+        raw = Files(self.home).read(f"workspace/goals/{identifier(key)}/GOAL.md")
         text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         first, _, body = text.partition("\n")
         if not first.startswith("<!-- hermes-muse ") or not first.endswith(" -->"):
@@ -184,5 +196,10 @@ class Store:
         return result
 
     def save_goal(self, record, body, *, expected_hash=None):
+        from .mutations import CURRENT_REQUEST
+        if CURRENT_REQUEST.get():
+            record["_request_id"] = CURRENT_REQUEST.get()
+        else:
+            record.pop("_request_id", None)
         key = identifier(record["id"])
         self.write_text(f"workspace/goals/{key}/GOAL.md", "<!-- hermes-muse " + json.dumps(record, ensure_ascii=False, allow_nan=False) + " -->\n" + body, expected_hash=expected_hash)

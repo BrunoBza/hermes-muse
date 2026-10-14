@@ -19,7 +19,7 @@ class RunTests(unittest.TestCase):
         self.store = Store(self.home)
         self.now = 1800000000.0
         self.jobs = {'hourly': {'key': 'memory-upkeep'}, 'night': {'key': 'nightly-review'}, 'patrol': {'key': 'proactive-watch'}}
-        host = SimpleNamespace(manifest=lambda: {'jobs': self.jobs}, local_now=lambda t: datetime.fromtimestamp(t, timezone.utc))
+        host = SimpleNamespace(manifest=lambda: {'jobs': self.jobs}, owned_job=lambda key:self.jobs.get(key), local_now=lambda t: datetime.fromtimestamp(t, timezone.utc))
         self.runs = Runs(self.store, host, lambda: self.now)
         (self.home/'cron').mkdir()
         self.path = self.home/'cron/executions.db'

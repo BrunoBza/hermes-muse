@@ -64,11 +64,14 @@ def run(home):
 
         def call(action, data=None, *, ok=True, sid=None, task_id=None):
             cid = "muse-" + str(time.monotonic_ns())
-            raw = handle_function_call("muse_manage", {"action": action, "data": data or {}},
+            from tool_client import arguments, transport
+            raw = handle_function_call("muse_manage", transport({"action": action, "data": arguments(rt, action, data)}),
                 session_id=sid or current["sid"], turn_id=current["turn"], tool_call_id=cid,
                 task_id=task_id, enabled_toolsets=["muse"])
             current.update(last_call_id=cid, last_tool_result=raw)
             result = json.loads(raw)
+            from tool_client import record
+            record(action,result)
             assert result.get("ok") is ok, result
             return result.get("result") if ok else result
 
@@ -76,6 +79,11 @@ def run(home):
             return rt.store.goal(goal)[0]["followup"]
 
         def update(kind, goal, *, ok=True, **data):
+            if kind == "verification" and ok and "evidence_refs" not in data:
+                from hermes_muse.views import Views
+                rt.store.write_text(f"workspace/goals/{goal}/files/fixture-result.md", data.get("summary", "Fixture result"))
+                revision=Views(home).object("goal_file",goal,"files/fixture-result.md")[2]
+                data["evidence_refs"]=[{"kind":"muse_object","object_kind":"goal_file","id":goal,"resource":"files/fixture-result.md","revision":revision}]
             return call("followup_update", {"kind": kind, "goal_id": goal,
                 "expected_revision": fu(goal)["revision"], **data}, ok=ok)
 
@@ -339,6 +347,7 @@ def run(home):
             clear_session_vars(cron_tokens)
             assert len(joined["native"]["results"]) == 2 and fu("joined")["execution_state"] == "finished"
             cid, raw = current["last_call_id"], current["last_tool_result"]
+            assert call("research_status", {"id": joined["id"]})["id"] == joined["id"]
             native_db.append_message("joined-cron", "assistant", tool_calls=[{"id": cid, "function": {"name": "muse_manage", "arguments": '{}'}}])
             native_db.append_message("joined-cron", "tool", raw, tool_name="muse_manage", tool_call_id=cid)
             parent.session_id = current["sid"]
@@ -346,7 +355,7 @@ def run(home):
             assert joined_evidence["complete"] and "Fixture joined" in joined_evidence["text"], (joined_evidence, cid, raw)
             update("verification", "joined", result_state="verified", sources=["message:" + str(joined_evidence["message_id"])],
                    verified_at=clock[0], summary="Both joined results were read against original criteria")
-            end("Both accepted fixture answers and evidence are ready.")
+            end("Both joined results were read against original criteria. Both accepted fixture answers and evidence are ready.")
             update("handoff", "joined", reply_id=digest(current["sid"] + ":" + current["turn"]),
                    reason="Actual final reply already contains the verified answers; ordinary transport proof is unavailable")
             assert fu("joined")["delivery_state"] == "unknown"

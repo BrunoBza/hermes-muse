@@ -34,7 +34,10 @@ def run(home):
         texts=['Original accepted scope; do not discard this older promise.']+['Synthetic chat '+str(n) for n in range(45)]+['x'*30000+'Cancel first scope only; keep second scope.']
         for text in texts:db.append_message('source','user',text)
         def call(action,data=None,ok=True,task=None):
-            result=json.loads(handle_function_call('muse_manage',{'action':action,'data':data or {}},session_id='source',turn_id='user-one',tool_call_id='fixture-'+str(time.monotonic_ns()),task_id=task,enabled_toolsets=['muse']))
+            from tool_client import arguments, transport
+            result=json.loads(handle_function_call('muse_manage',transport({'action':action,'data':arguments(rt,action,data)}),session_id='source',turn_id='user-one',tool_call_id='fixture-'+str(time.monotonic_ns()),task_id=task,enabled_toolsets=['muse']))
+            from tool_client import record
+            record(action,result)
             assert result['ok'] is ok,result
             return result.get('result') if ok else result
         context=call('context');state=context['recent_conversations']['source']
@@ -69,8 +72,8 @@ def run(home):
                 created=call('watch_create',{**watch,'prompt':'p'*3996+'TAIL','stop_condition':'s'*3996+'STOP'},task=task)
                 assert created['schedule']['kind']=='interval' and created['schedule']['minutes']==30
                 assert 'TAIL' in created['prompt'] and created['prompt'].endswith('STOP')
-                shorter=call('watch_create',{**watch,'schedule':'every 10m'},task=task)
-                assert shorter['schedule']['minutes']==10  # Explicit demand is not silently slowed.
+                shorter=call('watch_create',{**watch,'schedule':'every 10m'},task=task,ok=False)
+                assert '30 minutes' in shorter['error']
             # Actual public delegate handler and actual core stateless fallback; provider work is stubbed.
             parent=SimpleNamespace(valid_tool_names={'delegate_task'},session_id='source',_delegate_depth=0,model='fixture-parent',provider='custom',base_url='https://fixture.invalid/v1',api_key='synthetic',api_mode='chat_completions',request_overrides=None)
             def children(tasks,schemas,creds,**kwargs):
@@ -78,7 +81,7 @@ def run(home):
                 return [(i,t,SimpleNamespace()) for i,t in enumerate(tasks)],None
             with bind_subagent_parent(parent),patch('tools.delegate_tool._build_children',side_effect=children),patch('tools.delegate_tool_dispatch._execute_and_aggregate',return_value={'results':[{'status':'completed','summary':'Synthetic joined result'}]}):
                 result=call('delegate',{'goal':'Inspect synthetic evidence'},task=task)
-                assert 'results' in result and 'SYNCHRONOUSLY' in result['note'] and 'public_native_route' in result['muse_routing']
+                assert 'results' in result and 'SYNCHRONOUSLY' in result['note']
         finally:isolation.exit()
         assert entry.schema==frozen and call('calendar_window')['days']==30
         assert not rt.store.all('notification') and not rt.store.all('source_check')

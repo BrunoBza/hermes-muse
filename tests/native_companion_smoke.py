@@ -24,7 +24,12 @@ def run(home):
     now = time.time()
 
     def call(operation, **data):
-        result = json.loads(runtime.handle({"action": operation, "data": data}))
+        from tool_client import arguments, transport
+        if operation == "preferences": data.setdefault("signal_id", "new-user-choice")
+        origin=runtime.store.read("signal", data.get("signal_id"), {}).get("session_id", "source-session")
+        result = json.loads(runtime.handle(transport({"action": operation, "data": arguments(runtime, operation, data)}), session_id=origin))
+        from tool_client import record
+        record(operation,result)
         assert result["ok"], (operation, result)
         return result["result"]
 
@@ -76,14 +81,15 @@ def run(home):
             call("forget", kind="interest", id="discard", signal_id="discard-choice")
             assert runtime.store.read("interest", "discard") is None
             owned = None
-            refused = json.loads(runtime.handle({"action":"watch_create", "data": {
+            from tool_client import arguments, transport
+            refused = json.loads(runtime.handle({"action":"watch_create", "data": arguments(runtime, "watch_create", {
                 "goal_id":"bicycle", "signal_id":"new-user-choice", "schedule":"every 5m",
-                "prompt":"Read fixture", "stop_condition":"User chooses"}}))
+                "prompt":"Read fixture", "stop_condition":"User chooses"})}, session_id="source-session"))
             assert not refused["ok"] and "allow_agent_scheduling" in refused["error"]
             from hermes_cli.config import load_config_readonly
             config = {**load_config_readonly(), "cron": {"allow_agent_scheduling": True}}
             with patch("hermes_cli.config.load_config_readonly", return_value=config):
-                for schedule in ("every 5m", "* * * * *", "*/31 * * * *", "10,50 0,23 * * MON", "in 1m"):
+                for schedule in ("every 30m", "0,30 * * * *", "0 * * * *", "in 1m"):
                     watch = call("watch_create", goal_id="bicycle", signal_id="new-user-choice", schedule=schedule,
                                  prompt="x" * 4000, stop_condition="User chooses a bicycle")
                     assert get_job(watch["id"]), schedule
@@ -192,7 +198,8 @@ def run(home):
 
         tokens = set_session_vars(session_id="cron-session", chat_type="private", cron_session="1")
         try:
-            call("goal_update", id="bicycle", status="completed", signal_id="new-user-choice")
+            runtime.service.signal("completed-choice", "source-session", "I confirm bicycle is completed")
+            call("goal_update", id="bicycle", status="completed", signal_id="completed-choice", evidence_refs=[{"kind":"user_report","signal_id":"completed-choice","quote":"I confirm bicycle is completed"}])
             assert not get_job(owned["id"])["enabled"]
         finally:
             clear_session_vars(tokens)

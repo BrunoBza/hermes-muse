@@ -44,6 +44,7 @@ class FollowupTests(unittest.TestCase):
             patch.dict(sys.modules, {"agent.delegation_context": delegated,
                                     "agent.subagent_lifecycle": lifecycle, "tools.async_delegation": ledger}),
             patch("hermes_muse.runtime.profile_scope", lambda home: contextlib.nullcontext()),
+            patch("hermes_muse.mutations.profile_scope", lambda home: contextlib.nullcontext()),
             patch("hermes_muse.runtime.session_info", lambda: {"cron": False, "chat_type": "private",
                   "platform": "", "chat_id": "", "id": self.sid}),
         ]
@@ -76,7 +77,18 @@ class FollowupTests(unittest.TestCase):
         return json.dumps(self.native)
 
     def call(self, action, data=None, *, ok=True, session_id=None):
-        result = json.loads(self.runtime.handle({"action": action, "data": data or {}},
+        from hermes_muse.contracts import CAS, CREATES
+        from hermes_muse.mutations import target,object_state
+        from hermes_muse.views import Views
+        import uuid
+        data = dict(data or {})
+        if action in CAS or action in CREATES:
+            data.setdefault("request_id", uuid.uuid4().hex)
+        if action in CAS:
+            kind, key = target(action, data)
+            try: data.setdefault("expected_revision", object_state(Views(self.home),kind,key)[2])
+            except ValueError: data.setdefault("expected_revision", "absent")
+        result = json.loads(self.runtime.handle({"action": action, "data": data},
                          session_id=session_id or self.sid, turn_id=self.turn))
         self.assertEqual(result["ok"], ok, result)
         return result.get("result") if ok else result["error"]
@@ -112,6 +124,10 @@ class FollowupTests(unittest.TestCase):
         return self.call("delegate", {"goal_id": key, "goal": "Read fixture and return evidence"}, ok=ok)
 
     def verified(self, key="bank", **extra):
+        from hermes_muse.views import Views
+        self.runtime.store.write_text(f"workspace/goals/{key}/files/result.md", "Fixture result meeting accepted criteria")
+        revision = Views(self.home).object("goal_file", key, "files/result.md")[2]
+        extra.setdefault("evidence_refs", [{"kind":"muse_object", "object_kind":"goal_file", "id":key, "resource":"files/result.md", "revision":revision}])
         return self.update("verification", key, result_state="verified", sources=["fixture:artifact"],
                            verified_at=self.now, summary="Original criteria checked", **extra)
 
@@ -284,7 +300,7 @@ class FollowupTests(unittest.TestCase):
         self.update("verification", result_state="verified", sources=["fixture:outer-zero"],
                     verified_at=self.now, summary="Cannot claim success", ok=False)
         self.update("verification", result_state="failed", sources=["fixture:inner-seven"],
-                    verified_at=self.now, summary="Child actually exited seven")
+                    verified_at=self.now, summary="Child actually exited seven", evidence_refs=[{"kind":"user_report","signal_id":self.turn,"quote":"Evaluate fixture bank migration"}])
         self.assertEqual(self.fu()["result_state"], "failed")
         self.assertEqual(self.fu()["delivery_state"], "open")
 
@@ -443,8 +459,7 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual(self.update("observe")["status"], "owner_level")
         self.update("verification", result_state="verified", sources=["fixture:artifact"],
                     verified_at=self.now, summary="An idle owner alone is insufficient", ok=False)
-        self.update("verification", result_state="verified", sources=["fixture:authoritative-result"],
-                    verified_at=self.now, summary="Original authoritative task and artifact read", external_status_verified=True)
+        self.verified(external_status_verified=True)
         self.assertEqual(self.calls, [])
 
     def test_reply_already_given_before_late_formal_verification_is_not_resent(self):
@@ -527,6 +542,25 @@ class FollowupTests(unittest.TestCase):
         goal, body, fingerprint = self.runtime.store.goal("bank", with_fingerprint=True)
         self.runtime.store.save_goal(goal, body, expected_hash=fingerprint)
         self.assertEqual(self.runtime.store.goal("bank")[0]["id"], "bank")
+
+
+    def test_semantic_post_commit_crash_recovers_same_request_without_recreate(self):
+        self.user()
+        data={'id':'crash-goal','title':'Fixture','description':'Accepted scope','completion_criteria':'Verified result','signal_id':self.turn,'request_id':'create-once'}
+        original=self.runtime.store.write
+        def fail_result(kind,key,value):
+            if kind=='mutation_request' and value.get('state')=='complete':
+                raise RuntimeError('Injected journal-result crash after goal commit')
+            return original(kind,key,value)
+        with patch.object(self.runtime.store,'write',side_effect=fail_result):
+            first=json.loads(self.runtime.handle({'action':'goal_create','data':data},session_id=self.sid,turn_id=self.turn))
+        self.assertFalse(first['ok'])
+        recovered=json.loads(self.runtime.handle({'action':'goal_create','data':data},session_id=self.sid,turn_id=self.turn))
+        self.assertTrue(recovered['ok'],recovered)
+        self.assertTrue(recovered['recovered'])
+        self.assertEqual(len(self.runtime.store.goals()),1)
+        changed=json.loads(self.runtime.handle({'action':'goal_create','data':{**data,'title':'Other'}},session_id=self.sid,turn_id=self.turn))
+        self.assertEqual(changed['code'],'idempotency_conflict')
 
 
 if __name__ == "__main__":

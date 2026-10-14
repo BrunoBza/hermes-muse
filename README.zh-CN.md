@@ -238,4 +238,13 @@ MIT 开源协议。
 
 Cron新建watch遵循cron.allow_agent_scheduling；本地goal登记不创建Cron。watch的prompt/stop各显式校验4,000字符，不静默截断；省略schedule默认每30分钟，明确更短/一次性原生schedule仍支持，未实施绝对30分钟底线，不改已有jobs。
 
-无路由冲突时Cron使用公开委派并由原生stateless上下文同步收结果；配置/未知冲突保留明确披露的private父模型路由例外，等待公开scoped API，不能称该审核请求全部解决。研究/审计最多3并尊重用户更低限额，全部问题/页保留。子代理被指示只读，继承父权限，绝非文件/terminal/浏览器/企业MCP硬只读沙箱。全局配置不修改，详细边界见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
+Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊重用户 delegation.* 的 provider/model/reasoning/concurrency；未覆盖时才由宿主采用父模型默认。研究/审计最多 3 并尊重更低限额，全部问题与审阅槽保留。新建重复 watch 至少 30 分钟，once 豁免；已有排程不追改。Cron 修改 feed_brief 不自唤醒。详见[兼容说明](docs/CATALOG-COMPATIBILITY.md)。
+
+
+## 0.2.0 统一入口与页面
+
+同一个发行包提供 Dashboard/Desktop 页面与纯读 API，保留完整 Feed、主题、点子和目标，浏览不跑模型、不记录阅读进度。Desktop 仅向选定真实原聊天填入草稿，由用户发送后按正常工具授权执行。
+
+所有 Muse 正文使用 content_read/content_write 与对象 ID，不要求模型知道私有路径，也不增加 Docker 的 Muse 挂载。可变动作使用 expected_revision 和稳定 request_id；冲突先回读，未知结果先核原执行。原生 memory、SOUL、skills 与 connector 不迁移。41 个动作及字段见 [INTERFACE](docs/INTERFACE.md)。
+
+有计划停用时，启用状态下调用 installation_prepare 保存逐任务续点并暂停经安装身份核验的任务，然后通过宿主原生入口停用/移除。普通卸载回调不暗中暂停任务。确认记忆时区分已保存、待批、提交未确认、失败、重复和未知；批准完成事件、provider 持久化证明、后台通知合并与所有直接停用路径清扫仍按公开宿主契约降级。

@@ -196,6 +196,8 @@ class Operations:
         return {**result, "token": token, "instruction": "Inspect intent and actual state, save findings first, then operations_complete(token). Continue through this snapshot while more=true. Calls/receipts are observations, not proof of correctness or authority. Missing, pruned, unpersisted and pre-scope history is not covered."}
 
     def complete(self, data):
+        if self.evidence({"receipt": data.get("token")})["missing"]:
+            raise ValueError("Native evidence is missing; keep the page partial")
         with self.store.transaction() as db:
             snapshot = self.store.get(db, "operation_snapshot", data.get("token"), {})
             if not snapshot:  # Finish a page issued before the upgrade without resetting its cursor.
@@ -225,6 +227,10 @@ class Operations:
         """Read only references issued to an audit page, without copying a transcript to plugin state."""
         token = data.get("receipt")
         snapshot = self.store.read("operation_snapshot", token, {})
+        if not snapshot:
+            legacy = self.store.read("meta", "operation_snapshot", {})
+            if legacy.get("token") == token:
+                snapshot = legacy
         if not snapshot or snapshot["execution_through"] < self.clock() - 7 * DAY:
             raise ValueError("Audit page expired or unknown; ask the parent to reread its batch")
         ref = data.get("ref")
@@ -268,14 +274,19 @@ class Operations:
                         missing.append(item)
         elif execution_refs:
             missing.extend(execution_refs)
+        wave = self.store.read("meta", "operation_wave", {})
+        slot = next((p["slot"] for p in wave.get("pages", []) if p["receipt"] == token), None)
+        identity = {"receipt": token, "batch": wave.get("number") if slot else None, "slot": slot,
+                    "expected_refs": snapshot["refs"], "returned_refs": [r["ref"] for r in events + executions],
+                    "historical_content": True, "observed_at": self.clock()}
         if ref is None:
-            return {"events": [preview(e) for e in events], "executions": executions, "missing": missing,
+            return {**identity, "events": [preview(e) for e in events], "executions": executions, "missing": missing,
                     "instruction": "This is an evidence index. Expand truncated entries needed to verify intent, effects, failures or promises via the same receipt and ref. Group related calls/results; harmless known read-only inspections need no body replay. Never call a preview a full evidence review."}
         text = json.dumps((events + executions)[0], ensure_ascii=False) if events or executions else ""
         offset, length = data.get("offset", 0), data.get("length", 12000)
         if type(offset) is not int or offset < 0 or type(length) is not int or not 1 <= length <= 24000:
             raise ValueError("Use a nonnegative offset and length 1..24000")
-        return {"ref": ref, "text": text[offset:offset + length], "offset": offset,
+        return {**identity, "ref": ref, "text": text[offset:offset + length], "offset": offset,
                 "next_offset": offset + length if offset + length < len(text) else None, "total_chars": len(text), "missing": missing}
 
     def finding(self, data):

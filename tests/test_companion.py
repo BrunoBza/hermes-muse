@@ -38,6 +38,7 @@ class Host:
 
 def prepare(home):
     store = Store(home)
+    store.write_text("install.json", json.dumps({"plugin":"hermes-muse", "installation_id":"fixture", "jobs":{}, "fixed":{}}))
     for file in (ROOT / "templates").rglob("*.md"):
         store.write_text(file.relative_to(ROOT / "templates").as_posix(), file.read_text(), create_only=True)
     store.path("workspace/goals").mkdir(parents=True, exist_ok=True)
@@ -374,7 +375,7 @@ class CompanionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.goal_update({"id": "bicycle", "status": "active", "outcome_evidence": result["outcome_evidence"]})
 
-    def test_external_cancellation_requires_verified_source_even_days_later(self):
+    def test_external_cancellation_requires_current_user_authority_without_claiming_owner_stopped(self):
         self.goal(external_ref="calendar://event")
         self.now += 3 * DAY
         update = {"id": "bicycle", "status": "cancelled", "outcome_evidence": {
@@ -382,7 +383,12 @@ class CompanionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.goal_update(update)
         self.assertEqual(self.store.goal("bicycle")[0]["status"], "active")
-        self.assertEqual(self.service.goal_update({**update, "external_status_verified": True})["status"], "cancelled")
+        with self.assertRaises(ValueError):
+            self.service.goal_update({**update, "external_status_verified": True})
+        signal = self.user("I confirm bicycle was cancelled")
+        update["signal_id"] = signal
+        update["evidence_refs"] = [{"kind":"user_report", "signal_id":signal, "quote":"I confirm bicycle was cancelled"}]
+        self.assertEqual(self.service.goal_update(update)["status"], "cancelled")
 
     def test_independent_idea_has_evidence_expiry_and_no_implicit_goal(self):
         args = {"title": "An upcoming local exhibition", "rationale": "Matches known preferences",
@@ -419,6 +425,9 @@ class CompanionTests(unittest.TestCase):
     def test_closed_goal_stops_watches_but_keeps_final_result(self):
         self.goal()
         old = self.notice("old", goal_id="bicycle")
+        verified, body = self.store.goal("bicycle")
+        verified["followup"].update(result_state="verified", verification={"verified_at":self.now,"summary":"Synthetic result verified"})
+        self.store.save_goal(verified, body)
         final = self.notice("final", goal_id="bicycle", final_result=True, priority="urgent")
         for row in (old, final):
             self.service.notification_queue({"id": row["id"]})
@@ -507,7 +516,7 @@ class CompanionTests(unittest.TestCase):
     def test_feed_search_feedback_delete_and_no_recreation(self):
         args = {"event_key": "article-one", "title": "A bike comparison", "content": "Durable wheel bearings matter.", "sources": ["https://example.org/spec"], "why": "An explicit user interest"}
         article = self.service.feed_add(args)
-        self.assertEqual(self.service.feed_list({"query": "bearings"})[0]["id"], article["id"])
+        self.assertEqual(self.service.feed_list({"query": "bearings"})["items"][0]["id"], article["id"])
         updated = self.service.feed_update({"id": article["id"], "signal_id": self.signal, "feedback": "More technical detail", "position": 9999999999})
         self.assertEqual(updated["feedback"]["text"], "More technical detail")
         self.service.feed_update({"id": article["id"], "signal_id": self.signal, "delete": True})

@@ -55,7 +55,9 @@ class AuditTests(OperationFixture):
         audit = Audit(self.ops)
         batch = audit.batch()
         self.now += 10
-        self.assertEqual(batch, Audit(self.ops).batch())
+        resumed = Audit(self.ops).batch()
+        self.assertGreater(resumed.pop("observed_at"), batch.pop("observed_at"))
+        self.assertEqual(batch, resumed)
         result = audit.commit({'batch': batch['batch'], 'reviews': [{'slot': 1, 'summary': 'Verified original request and result'}]})
         self.assertFalse(result['more'])
         self.assertFalse(audit.commit({'batch': batch['batch'], 'reviews': [{'slot': 1, 'summary': 'Retry acknowledgement'}]})['more'])
@@ -70,6 +72,22 @@ class AuditTests(OperationFixture):
         self.assertTrue(self.ops.evidence({'receipt': receipt})['missing'])
         with self.assertRaisesRegex(ValueError, 'missing'):
             Audit(self.ops).commit({'batch': batch['batch'], 'reviews': [{'slot': 1, 'summary': 'Cannot verify deleted native evidence'}]})
+
+
+    def test_active_and_unknown_receipts_never_launch_another_worker(self):
+        self.call()
+        audit = Audit(self.ops)
+        batch = audit.batch()
+        request = {'tasks':[batch['assignments'][0]['task']]}
+        calls = []
+        result = audit.dispatch(request, lambda: calls.append('launch') or {'status':'dispatched','delegation_id':'original'}, session_id='parent', tool_call_id='call')
+        self.assertEqual(result['delegation_id'],'original')
+        with self.assertRaisesRegex(ValueError,'original dispatch'):
+            audit.dispatch(request, lambda: calls.append('duplicate') or {})
+        saved = audit.batch()
+        self.assertFalse(saved['assignments'])
+        self.assertEqual(saved['pending_owners'][0]['owner_id'],'original')
+        self.assertEqual(calls,['launch'])
 
 
 if __name__ == '__main__':

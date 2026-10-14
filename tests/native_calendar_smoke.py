@@ -10,7 +10,10 @@ def run(entry, runtime):
     notices_before = runtime.store.all('notification')
 
     def action(name, data=None):
-        result = json.loads(entry.handler({'action': name, 'data': data or {}}))
+        from tool_client import transport
+        result = json.loads(entry.handler(transport({'action': name, 'data': data or {}})))
+        from tool_client import record
+        record(name,result)
         assert result['ok'], result
         return result['result']
 

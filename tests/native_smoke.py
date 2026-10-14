@@ -77,17 +77,23 @@ def main():
                 rendered = str(prompt)
                 expected_prompt = (PROJECT / "prompts/system.md").read_text().replace("{{MUSE_HOME}}", str(home / "muse")).replace("{{HERMES_HOME}}", str(home))
                 assert any(section.content == expected_prompt.strip() for section in prompt), "The host clipped part of the shipped system instructions"
-                assert str(home / "muse") in rendered, rendered
-                assert str(homes[1 - index] / "muse") not in rendered
+                assert "muse_manage" in str(rendered), rendered
+                assert str(home / "muse") not in str(rendered), "Prompts must use object IDs"
+                assert str(homes[1 - index] / "muse") not in str(rendered)
                 skill = skill_view("hermes-muse:companion")
                 assert "Goal" in str(skill) or "goal" in str(skill), str(skill)
                 briefing = skill_view("hermes-muse:companion", file_path="references/briefings.md")
                 assert (PROJECT / "skills/companion/references/briefings.md").read_text().strip() in json.loads(briefing)["content"]
                 entry = registry.get_entry("muse_manage")
                 assert entry, "Plugin tool absent"
-                status = json.loads(entry.handler({"action": "context"}))
+                def call_registered(args, **kwargs):
+                    from tool_client import transport, record
+                    raw = entry.handler(transport(args), **kwargs)
+                    record(args["action"], json.loads(raw))
+                    return raw
+                status = json.loads(call_registered({"action": "context"}))
                 assert status["ok"], status
-                assert status["result"]["workspace"] == str(home / "muse")
+                assert status["result"]["scope_token"] and "workspace" not in status["result"]
                 # Exercise the actual native finalizer with the registered plugin hook.
                 from types import SimpleNamespace
                 import time, uuid
@@ -119,30 +125,20 @@ def main():
                 parent.api_mode, parent.api_key = "chat_completions", "fixture-not-a-secret"
                 with bind_subagent_parent(parent), patch("hermes_cli.config.load_config_readonly", return_value={"delegation": {"model": "fixture-sol"}}), patch("tools.delegate_tool.delegate_task", autospec=True,
                         return_value=json.dumps({"results": [{"status": "completed"}]})) as dispatch:
-                    owned = json.loads(entry.handler({"action": "delegate", "data": {"goal": "Inspect fixture evidence"}},
+                    owned = json.loads(call_registered({"action": "delegate", "data": {"goal": "Inspect fixture evidence"}},
                         task_id="cron:" + patrol + ":" + attempt["id"]))
                     assert owned["ok"], owned
-                    assert dispatch.call_args.kwargs["credentials_cfg"] == {}
-                    assert dispatch.call_args.kwargs["background"] is False
-                    for model in ("fixture-luna", "fixture-next-model"):
-                        parent.model = model
-                        creds = _resolve_delegation_credentials(dispatch.call_args.kwargs["credentials_cfg"], parent)
-                        child = _resolve_child_runtime(parent, {"model": "fixture-sol", "reasoning_effort": "medium"},
-                            parent.api_key, model=creds["model"], override_provider=creds["provider"],
-                            override_base_url=creds["base_url"], override_api_key=creds["api_key"],
-                            override_api_mode=creds["api_mode"], override_acp_command=creds.get("acp_command"),
-                            override_acp_args=creds.get("acp_args"), routing_cfg={})
-                        assert child["model"] == model, child
-                        assert child["base_url"] == parent.base_url and child["api_key"] == parent.api_key
-                        assert child["requested_provider"] == parent.requested_provider
-                    ordinary = json.loads(entry.handler({"action": "delegate", "data": {"goal": "Read fixture"}},
+                    assert "credentials_cfg" not in dispatch.call_args.kwargs
+                    # Public registry receives the parent; native routing honors delegation config.
+                    assert dispatch.call_args.kwargs["parent_agent"] is parent
+                    ordinary = json.loads(call_registered({"action": "delegate", "data": {"goal": "Read fixture"}},
                         task_id="cron:unrelated:unknown"))
                     assert ordinary["ok"], ordinary
                     assert "credentials_cfg" not in dispatch.call_args.kwargs
                     assert dispatch.call_args.kwargs["background"] is True
-                    forged = json.loads(entry.handler({"action": "delegate", "data": {"goal": "x", "owned_cron": True}}))
+                    forged = json.loads(call_registered({"action": "delegate", "data": {"goal": "x", "owned_cron": True}}))
                     assert not forged["ok"], forged
-                prepared = json.loads(entry.handler({"action": "notification_prepare", "data": {"id": notice["id"]}},
+                prepared = json.loads(call_registered({"action": "notification_prepare", "data": {"id": notice["id"]}},
                     task_id="cron:" + patrol + ":" + attempt["id"], session_id="native-patrol"))["result"]
                 agent = SimpleNamespace(session_id="native-patrol", model="test", platform="cron")
                 final, changed, _ = apply_llm_output_transform(agent, "Status: dispatching", turn_id="native-turn")
@@ -156,7 +152,7 @@ def main():
                      patch("tools.bot_live_delivery.deliver_to_live_owner", side_effect=lambda home, owner, message, **kw: {"status": "queued", "message": message}) as deliver:
                     _deliver_to_bot_chat({"id": patrol, "name": "muse-proactive-watch", "execution_id": attempt["id"]}, final, "")
                     assert deliver.call_args.kwargs["delivery_id"] == bot_receipt_key(home, patrol, attempt["id"])
-                context = json.loads(entry.handler({"action": "context"}, task_id="cron:" + patrol + ":" + attempt["id"]))["result"]
+                context = json.loads(call_registered({"action": "context"}, task_id="cron:" + patrol + ":" + attempt["id"]))["result"]
                 assert context["nightly_user_signals"] == []
                 finish_execution(attempt["id"], success=True, delivery_outcome="delivered")
                 runtime.host.reconcile()
@@ -171,13 +167,13 @@ def main():
                 weekly = runtime.host.manifest()["fixed"]["weekly-governance-review"]
                 review_attempt = create_execution(weekly, source="test")
                 mark_execution_running(review_attempt["id"])
-                review_context = json.loads(entry.handler({"action": "context"},
+                review_context = json.loads(call_registered({"action": "context"},
                     task_id="cron:" + weekly + ":" + review_attempt["id"], session_id="native-review"))
                 assert review_context["ok"]
                 staged = runtime.service.notification_add({"event_key": uuid.uuid4().hex, "message": "A future patrol candidate.",
                     "rationale": "Isolated test", "sources": ["fixture"], "verified_at": time.time(),
                     "expires": time.time() + 3600, "priority": "urgent"})
-                report_candidate = json.loads(entry.handler({"action": "notification_prepare", "data": {"id": staged["id"]}},
+                report_candidate = json.loads(call_registered({"action": "notification_prepare", "data": {"id": staged["id"]}},
                     task_id="cron:" + weekly + ":" + review_attempt["id"], session_id="native-review"))["result"]
                 assert report_candidate["status"] == "pending" and report_candidate["final_response"] == "[SILENT]"
                 assert not runtime.store.read("notification", staged["id"]).get("execution_id")
@@ -203,25 +199,25 @@ def main():
                     native_db.append_message("audit-child", "tool", "Child result", tool_name="inspect", tool_call_id="child-call")
                     native_db.close()
                     runtime.store.write("session", "native-history", {"id": "native-history", "last_signal": time.time()})
-                    audit_response = json.loads(entry.handler({"action": "operations_read"}))
+                    audit_response = json.loads(call_registered({"action": "operations_read"}))
                     assert audit_response["ok"], audit_response
                     audit = audit_response["result"]
                     assert audit["available"] and not audit["gaps"], audit
                     assert {"native-history", "audit-child"} <= {e["session_id"] for e in audit["events"]}, audit
                     assert any(e.get("related_call", {}).get("call", {}).get("id") == "native-write" for e in audit["events"])
                     assert all(e["session_id"] != "group-history" for e in audit["events"])
-                    wave = json.loads(entry.handler({"action": "operations_batch"}))["result"]
+                    wave = json.loads(call_registered({"action": "operations_batch"}))["result"]
                     receipt = runtime.store.read("meta", "operation_wave")["pages"][0]["receipt"]
                     from agent.delegation_context import delegated_child_context
                     with delegated_child_context("audit-worker"):
-                        evidence = json.loads(entry.handler({"action": "operations_evidence", "data": {"receipt": receipt}}))
-                        assert evidence["ok"] and evidence["result"]["events"], evidence
-                        forbidden = json.loads(entry.handler({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Must return to parent"}]}}))
+                        evidence = json.loads(call_registered({"action": "operations_evidence", "data": {"receipt": receipt}}))
+                        assert not evidence["ok"] and evidence["code"] == "permission_denied", evidence
+                        forbidden = json.loads(call_registered({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Must return to parent"}]}}))
                         assert not forbidden["ok"], "Audit workers cannot advance parent state"
-                    committed = json.loads(entry.handler({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Parent verified native evidence and worker findings"}]}}))
+                    committed = json.loads(call_registered({"action": "operations_commit", "data": {"batch": wave["batch"], "reviews": [{"slot": 1, "summary": "Parent verified native evidence and worker findings"}]}}))
                     assert committed["ok"] and not committed["result"]["more"], committed
                     with patch("agent.subagent_lifecycle.get_active_subagent_parent", return_value=SimpleNamespace(iteration_budget=SimpleNamespace(remaining=3))):
-                        deferred = json.loads(entry.handler({"action": "operations_batch"}))["result"]
+                        deferred = json.loads(call_registered({"action": "operations_batch"}))["result"]
                         assert deferred["deferred"] and not deferred["assignments"]
                     runtime.service.operations.complete({"token": audit["token"], "summary": "Native read-only operation evidence verified"})
                     history = read_conversation(home, "native-history", time.time() - 86400)
@@ -231,7 +227,7 @@ def main():
                     runtime.service.signal("history-user", "native-history", "Please diagnose this screenshot.")
                     stale = runtime.service.notification_add({"event_key": "screenshot-stale", "message": "Please send another screenshot.",
                         "rationale": "Regression fixture", "sources": ["fixture"], "verified_at": time.time(), "expires": time.time()+3600})
-                    inspected = json.loads(entry.handler({"action": "context"}))["result"]
+                    inspected = json.loads(call_registered({"action": "context"}))["result"]
                     assert inspected["recent_conversations"]["native-history"]["complete"]
                     review = runtime.service.notification_review({"id": stale["id"], "conversation_revisions": {"native-history": history["revision"]},
                         "verdict": "resolved", "reason": "Native history confirms the completed diagnosis was already delivered"})
@@ -269,6 +265,8 @@ def main():
         followup_checks(base / "followup")
         from native_compatibility_smoke import run as compatibility_checks
         compatibility_checks(base / "compatibility")
+        from tool_client import close_containers
+        close_containers()
         print("PASS: native registration, Skill, prompt, tools, six Cron jobs, real script gates, A->B->A isolation, idempotent reload, preserved native files and harmless removed-plugin launchers")
 
 

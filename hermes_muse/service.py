@@ -4,14 +4,14 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from .calendar import assemble, validate_window, window
 from .handoff import render_result
 from .operations import Operations
 from .runs import Runs
 from .followup import Followups, capture, initial
-from .store import DAY, GOVERNANCE_JOBS, Store, bounded, digest, epoch, identifier, is_background_message, stamp
+from .store import DAY, GOVERNANCE_JOBS, bounded, digest, epoch, identifier, is_background_message, stamp
 
 DEFAULT_PREFERENCES = {"start_hour": 9, "end_hour": 22, "ordinary_per_day": None,
                        "time_sensitive_per_day": 3, "blocked_topics": [], "feed_brief": ""}
@@ -40,12 +40,14 @@ class Companion:
             raise ValueError("blocked_topics must be a list of topic IDs")
         return prefs
 
-    def preference_update(self, data):
+    def preference_update(self, data, *, cron=False):
         unknown = set(data) - set(DEFAULT_PREFERENCES)
         if unknown:
             raise ValueError(f"Unknown preference fields: {sorted(unknown)}")
         with self.store.transaction() as db:
             prefs = self.preferences()
+            changed = any(prefs.get(key) != value for key, value in data.items())
+            feed_changed = "feed_brief" in data and prefs["feed_brief"] != data["feed_brief"]
             prefs.update(data)
             # Validate before changing the file.
             for key, high in (("start_hour", 23), ("end_hour", 24), ("ordinary_per_day", 20), ("time_sensitive_per_day", 20)):
@@ -65,9 +67,9 @@ class Companion:
             self.store.put(db, "meta", "explicit_preferences", explicit)
             if "feed_brief" in data:
                 self.store.put(db, "meta", "feed_requested", self.clock())
-        if "feed_brief" in data:
+        if feed_changed and not cron:
             self.host.wake("feed-pulse")
-        return prefs
+        return {**prefs, "changed": changed}
 
     def signal(self, turn_id, session_id, text, route=None):
         if is_background_message(text):
@@ -102,6 +104,8 @@ class Companion:
             signal = self.require_signal(db, data.get("signal_id"))
             if self.store.path(f"workspace/goals/{key}/GOAL.md").exists():
                 raise ValueError("Goal already exists; use goal_update")
+            if signal["created"] <= self.store.get(db, "forgotten", "goal:" + key, 0):
+                raise ValueError("Forgotten goal cannot be recreated from old authority")
             parent_id = data.get("parent_id")
             if parent_id:
                 parent, _ = self.store.goal(parent_id)
@@ -130,7 +134,7 @@ class Companion:
             status = data.get("status", record["status"])
             if status not in {"active", "completed", "cancelled"}:
                 raise ValueError("Goal status must be active, completed or cancelled")
-            terminal_outcome = status == "completed" or (status == "cancelled" and record.get("external_ref"))
+            terminal_outcome = status == "completed"
             if "research_review_at" in data or (status != record["status"] and not terminal_outcome):
                 self.require_signal(db, data.get("signal_id"))
             if terminal_outcome and status != record["status"]:
@@ -146,8 +150,22 @@ class Companion:
                         raise ValueError("A terminal outcome needs recent original evidence satisfying the accepted criteria")
                     record["outcome_evidence"] = {"sources": refs, "verified_at": verified,
                                                       "summary": bounded(evidence.get("summary"), 2000)}
-            if status != "active" and record.get("external_ref") and not data.get("external_status_verified"):
-                raise ValueError("Read/update the external authoritative goal first and confirm its status")
+            if status == "completed" and (record.get("external_ref") or data.get("evidence_refs")):
+                from .evidence import resolve
+                record["outcome_refs"] = resolve(self, data.get("evidence_refs"), record)
+            if "description" in data or "completion_criteria" in data:
+                signal = self.require_signal(db, data.get("signal_id"))
+                if signal["session_id"] != record.get("session_id"):
+                    raise ValueError("Scope changes need current originating user authorization")
+                before, separator, criteria = body.partition("## Completion criteria\n")
+                if not separator:
+                    raise ValueError("Goal section boundaries are ambiguous; preserve content")
+                description = bounded(data["description"]) if "description" in data else before.partition("\n\n")[2].rstrip()
+                criteria = bounded(data["completion_criteria"]) if "completion_criteria" in data else criteria
+                body = f"# {record['title']}\n\n{description}\n\n## Completion criteria\n{criteria}\n"
+                if record.get("followup"):
+                    record["followup"].update(scope_revision=record["followup"]["scope_revision"]+1,
+                        result_state="unverified", delivery_basis=None, delivery_state="open")
             if data.get("progress"):
                 record["progress"] = (record.get("progress", []) + [{"at": now, "text": bounded(data["progress"], 2000)}])[-50:]
             record.update(status=status, updated=now)
@@ -158,11 +176,23 @@ class Companion:
                 record["research_review_at"] = review
             if record.get("followup"):
                 fu = record["followup"]
+                if status == "completed" and fu.get("intent_id"):
+                    receipt = self.store.get(db, "followup_receipt", fu.get("receipt_id"), {})
+                    if not receipt.get("terminal") or receipt.get("native_status") == "unknown" or receipt.get("failed"):
+                        raise ValueError("Original native execution is not a verified successful terminal result")
+                if status == "completed" and record.get("outcome_refs"):
+                    evidence = data.get("outcome_evidence") or {}
+                    fu.update(result_state="verified", verification={"verified_at": now,
+                        "summary": evidence.get("summary") or "Accepted completion evidence",
+                        "evidence_refs": record["outcome_refs"],
+                        "sources": [r["ref"].get("resource") or r["ref"].get("id") or r["ref"].get("signal_id") or "message:"+str(r["ref"].get("message_id")) for r in record["outcome_refs"]],
+                        "acceptance": "user_confirmed" if all(r["provenance"] == "user_reported" for r in record["outcome_refs"]) else "artifact_reviewed"}, delivery_basis=None)
                 fu["revision"] += 1
                 if status != "active":
                     fu["execution_state"] = "cancelled" if status == "cancelled" else "finished"
                 if status == "cancelled":
                     fu["scope_revision"] += 1
+                    fu["owner_cancellation_confirmed"] = False
                     if fu["delivery_state"] not in {"confirmed", "unknown"}:
                         fu["delivery_state"] = "suppressed"
             self.store.save_goal(record, body, expected_hash=fingerprint)
@@ -360,7 +390,7 @@ class Companion:
                 and (r["expires"] > now or r["status"] not in {"candidate", "pending"})]
         history = sorted((r for r in notices if r not in live), key=lambda r: r["created"], reverse=True)[:30]
         return {"now": stamp(now), "calendar_window": self.calendar_window({}), "recent_conversations": conversations,
-                "conversation_revisions": self.conversation_revisions(conversations), "workspace": str(self.store.root), "preferences": self.preferences(),
+                "conversation_revisions": self.conversation_revisions(conversations), "content_access": "muse_manage content_read by object kind/id", "preferences": self.preferences(),
                 "goals": [g for g in goals if g["status"] == "active" and g["research_review_at"] > now],
                 "goals_needing_review": [g for g in goals if g["status"] == "active" and g["research_review_at"] <= now],
                 "interests_and_ideas": interests,
@@ -379,7 +409,7 @@ class Companion:
                 "task_runs": self.runs.recent(),
                 "notifications": live,
                 "notification_history": history,
-                "feed": self.feed_list({})[:15]}
+                "feed": self.feed_list({"limit": 15})["items"]}
 
     def review_complete(self, data):
         job = data.get("job")
@@ -511,7 +541,7 @@ class Companion:
         if data.get("goal_id") and data.get("final_result"):
             goal, _ = self.store.goal(data["goal_id"])
             fu = goal.get("followup", {})
-            if fu.get("intent_id") and fu.get("result_state") != "verified":
+            if fu and fu.get("result_state") != "verified":
                 raise ValueError("Verify this dispatch against accepted criteria before preparing its final result")
             if goal.get("followup", {}).get("delivery_state") == "unknown":
                 raise ValueError("Final reply/delivery outcome is unknown; inspect existing evidence, never queue a duplicate")
@@ -543,6 +573,9 @@ class Companion:
             owner, _ = self.store.goal(row["goal_id"])
             if owner.get("followup"):
                 row["followup_scope_revision"] = owner["followup"]["scope_revision"]
+                row["followup_verified_at"] = owner["followup"].get("verification", {}).get("verified_at")
+                if owner["followup"].get("retry_failed_notice_id"):
+                    row["replaces"] = owner["followup"]["retry_failed_notice_id"]
         if not self.owner_valid(row):
             raise ValueError("Notification owner is inactive or expired")
         with self.store.transaction() as db:
@@ -673,7 +706,7 @@ class Companion:
         destination = (delivery.get("route") or {}).get("deliver")
         parts = []
         for row in rows:
-            snapshot = "Original item (preserve exact title/time): " + json.dumps(row["source_snapshot"], ensure_ascii=False) + "\n" if row.get("source_snapshot") else ""
+            snapshot = "Source evidence (original title and time): " + json.dumps(row["source_snapshot"], ensure_ascii=False) + "\n" if row.get("source_snapshot") else ""
             parts.append("[Hermes Muse notification " + row["id"] + "]\n" + snapshot +
                          "Why: " + row["rationale"] + "\nSources: " + ", ".join(row["sources"]) + "\n\n" + row["message"])
         return render_result("\n\n".join(parts), destination)
@@ -819,11 +852,8 @@ class Companion:
         return row
 
     def feed_list(self, data):
-        query = str(data.get("query", "")).casefold()
-        rows = self.store.all("feed")
-        if query:
-            rows = [r for r in rows if query in (r["title"] + " " + self.store.path(r["path"]).read_text(encoding="utf-8")).casefold()]
-        return sorted(rows, key=lambda r: r["position"], reverse=True)[:100]
+        from .views import Views
+        return Views(self.store.home).read({**data, "kind": "feed"})
 
     def feed_update(self, data):
         key = identifier(data["id"])
@@ -837,6 +867,20 @@ class Companion:
                 self.store.delete(db, "feed", key)
                 self.store.put(db, "forgotten", "feed:" + key, self.clock())
                 return {"id": key, "deleted": True}
+            if any(k in data for k in ("title", "content", "sources")):
+                sources = data.get("sources", row["sources"])
+                if not isinstance(sources, list) or not sources or any(not isinstance(x, str) or not x.strip() for x in sources):
+                    raise ValueError("Feed revisions need source references")
+                from .content_io import Files, revision
+                files = Files(self.store.home)
+                raw = files.read(row["path"])
+                title = bounded(data.get("title", row["title"]), 300)
+                content = data.get("content")
+                if content is None:
+                    content = raw.decode().partition("\n\n")[2].rpartition("\n\n## Sources\n")[0]
+                content = bounded(content, 60000)
+                files.replace(row["path"], (f"# {title}\n\n{content}\n\n## Sources\n" + "\n".join("- " + x for x in sources) + "\n").encode(), revision(raw))
+                row.update(title=title, sources=sources)
             if "feedback" in data:
                 row["feedback"] = {"text": bounded(data["feedback"], 2000), "signal_id": signal["id"], "at": self.clock()}
             if "position" in data:
@@ -852,7 +896,8 @@ class Companion:
             self.require_signal(db, data.get("signal_id"))
         goal_source = None
         if kind == "goal":
-            goal_source = self.store.goal(key)[0].get("source_signal")
+            goal_record = self.store.goal(key)[0]
+            goal_source = goal_record.get("source_signal")
             self.goal_update({"id": key, "status": "cancelled", "signal_id": data["signal_id"], "external_status_verified": data.get("external_status_verified", False)})
         with self.store.transaction() as db:
             row = self.store.get(db, kind, key)
@@ -878,6 +923,7 @@ class Companion:
                         self.store.delete(db, "followup_turn", candidate["id"])
                 if goal_source:
                     self.store.delete(db, "signal", goal_source)
+                self.store.put(db, "goal_tombstone", key, {"id": key, "session_id": goal_record.get("session_id"), "status": "cancelled", "forgotten_at": self.clock()})
                 # Only managed goal documents; user artifacts are enumerated for explicit cleanup.
                 self.store.path(f"workspace/goals/{key}/GOAL.md").unlink(missing_ok=True)
             if kind == "followup_turn" and row:
