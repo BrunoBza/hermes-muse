@@ -1,9 +1,9 @@
-"""GET-only routes mounted and authenticated by the Hermes plugin API host."""
+"""Host-authenticated content views and explicit non-default profile lifecycle."""
 
 import importlib.util
 import sys
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Body
 
 # Dashboard imports this file independently of the CLI plugin package.
 _package = (
@@ -24,15 +24,18 @@ if _package not in sys.modules:
     sys.modules[_package] = _module
     _spec.loader.exec_module(_module)
 _views = __import__(_package + ".views", fromlist=["Views"])
+_admin = __import__(_package + ".profile_admin", fromlist=["profiles"])
 router = APIRouter()
 
 
-def view():
+def view(selected_profile=None):
+    if selected_profile is not None:
+        return _admin.selected_view(selected_profile)
     from hermes_constants import get_hermes_home
-    from hermes_cli.config import load_config_readonly
+    from pm.plugins_state import read_home_selection
 
     home = Path(get_hermes_home())
-    config = load_config_readonly().get("plugins", {})
+    config = (read_home_selection(home) or {}).get("plugins", {})
     if "hermes-muse" not in config.get("enabled", []) or "hermes-muse" in config.get(
         "disabled", []
     ):
@@ -42,9 +45,9 @@ def view():
     return _views.Views(home)
 
 
-def read(data):
+def read(data, selected_profile=None):
     try:
-        return view().read(data)
+        return view(selected_profile).read(data)
     except _views.DomainError as exc:
         raise HTTPException(
             {
@@ -64,8 +67,8 @@ def read(data):
 
 
 @router.get("/capabilities")
-def capabilities():
-    current = view()
+def capabilities(selected_profile: str | None = None):
+    current = view(selected_profile)
     try:
         scope = current.scope()
     except _views.DomainError as exc:
@@ -73,7 +76,7 @@ def capabilities():
     return {
         "scope_token": scope,
         "read_only": True,
-        "profile": current.home.name,
+        "profile": selected_profile or current.home.name,
         "features": ["feed", "ideas", "goals", "topics", "pagination"],
         "host_gaps": [
             "pending_write_resolved",
@@ -90,6 +93,7 @@ def feed(
     query: str | None = None,
     cursor: str | None = None,
     limit: int = Query(25, ge=1, le=100),
+    selected_profile: str | None = None,
 ):
     return read(
         {
@@ -98,7 +102,7 @@ def feed(
             "query": query,
             "cursor": cursor,
             "limit": limit,
-        }
+        }, selected_profile
     )
 
 
@@ -109,6 +113,7 @@ def article(
     length: int = 12000,
     revision: str | None = None,
     scope_token: str | None = None,
+    selected_profile: str | None = None,
 ):
     return read(
         {
@@ -118,18 +123,18 @@ def article(
             "length": length,
             "revision": revision,
             "scope_token": scope_token,
-        }
+        }, selected_profile
     )
 
 
 @router.get("/ideas")
-def ideas(cursor: str | None = None, limit: int = Query(25, ge=1, le=100)):
-    return read({"kind": "idea", "cursor": cursor, "limit": limit})
+def ideas(cursor: str | None = None, limit: int = Query(25, ge=1, le=100), selected_profile: str | None = None):
+    return read({"kind": "idea", "cursor": cursor, "limit": limit}, selected_profile)
 
 
 @router.get("/goals")
-def goals(cursor: str | None = None, limit: int = Query(25, ge=1, le=100)):
-    return read({"kind": "goal", "cursor": cursor, "limit": limit})
+def goals(cursor: str | None = None, limit: int = Query(25, ge=1, le=100), selected_profile: str | None = None):
+    return read({"kind": "goal", "cursor": cursor, "limit": limit}, selected_profile)
 
 
 @router.get("/goals/{object_id}")
@@ -139,6 +144,7 @@ def goal(
     length: int = 12000,
     revision: str | None = None,
     scope_token: str | None = None,
+    selected_profile: str | None = None,
 ):
     return read(
         {
@@ -148,5 +154,24 @@ def goal(
             "length": length,
             "revision": revision,
             "scope_token": scope_token,
-        }
+        }, selected_profile
     )
+
+
+@router.get("/profiles")
+def profiles(request: Request):
+    from hermes_cli.web_server import _require_token
+    _require_token(request)
+    return _admin.profiles()
+
+
+@router.post("/profiles/{name}")
+def manage_profile(name: str, request: Request, data: dict = Body(...)):
+    from hermes_cli.web_server import _require_token
+    _require_token(request)
+    try:
+        return _admin.change(name, data)
+    except _views.DomainError as exc:
+        status = {"permission_denied": 403, "not_found": 404, "revision_conflict": 409,
+                  "outcome_unknown": 503, "source_unavailable": 503}.get(exc.code, 400)
+        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc

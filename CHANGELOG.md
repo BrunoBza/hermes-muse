@@ -1,3 +1,10 @@
+# 0.2.1 — unified local profile Dashboard
+
+- Full default installation hosts the page; explicit registered-profile selection before content reads.
+- Backend-enforced default read-only administration; native install/enable and data-preserving disable for other profiles.
+- Reuse owned-task preparation, retain user pauses/cadences, isolate lifecycle processes and credentials, and keep GETs free of initialization.
+- Clarify host-dispatched Muse tools with Docker terminal and independent remote Hermes instances. Windows compatibility remains unresolved.
+
 # 0.2.0 — approved implementation (unreleased)
 
 - Scoped content tools, explicit CAS/request keys, pure read projections and plugin-owned UI.

@@ -41,8 +41,14 @@ def prepare(runtime, data, session_id, turn_id):
             "'Please disable Muse now.' / 'Please uninstall Muse now.' / '请停用Muse插件' / '请卸载Muse插件'. "
             "Quoted, conditional, deferred and instructional questions do not authorize preparation.",
         )
+    return prepare_owned(runtime.home, store, host, data)
+
+
+def prepare_owned(home, store, host, data, *, origin="tool"):
+    """Shared pause lifecycle; caller has already authenticated its own entrypoint."""
+    request = data['request_id']
     signature = revision(canonical(data))
-    with profile_scope(runtime.home), file_lock(store.path("install.lock")):
+    with profile_scope(home), file_lock(store.path("install.lock")):
         manifest = host.manifest()
         pending = manifest.get("preparation")
         if pending:
@@ -51,7 +57,7 @@ def prepare(runtime, data, session_id, turn_id):
                     "idempotency_conflict", "An installation preparation already exists"
                 )
         else:
-            actual = Views(runtime.home).object("installation", "current")[2]
+            actual = Views(home).object("installation", "current")[2]
             if data.get("expected_revision") != actual:
                 raise DomainError(
                     "revision_conflict", "Reread installation", current_revision=actual
@@ -60,6 +66,8 @@ def prepare(runtime, data, session_id, turn_id):
                 "request_id": request,
                 "signature": signature,
                 "operation": data["operation"],
+                "origin": origin,
+                "expected_revision": data["expected_revision"],
                 "jobs": {},
                 "pending_evidence": [],
             }
@@ -122,5 +130,5 @@ def prepare(runtime, data, session_id, turn_id):
             "partial": any(r["state"] == "pending" for r in states.values()),
             "pending_evidence": pending["pending_evidence"],
             "requires_host_action": True,
-            "revision": Views(runtime.home).object("installation", "current")[2],
+            "revision": Views(home).object("installation", "current")[2],
         }

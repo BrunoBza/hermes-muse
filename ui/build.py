@@ -16,10 +16,11 @@ function useScope() {
   const profile = new URLSearchParams(location.search).get('profile');
   return {key:value, profile, label:location.host + ' · ' + (profile || 'Serving profile'), current:()=>key()===value};
 }
-function request(path,scope) { return SDK.fetchJSON('/api/plugins/hermes-muse'+path+(path.includes('?')?'&':'?')+'profile='+encodeURIComponent(scope.profile || '')); }
+function request(path,scope) { return SDK.fetchJSON('/api/plugins/hermes-muse'+path+(path.includes('?')?'&':'?')+'profile=default&selected_profile='+encodeURIComponent(scope.profile)); }
+const profileAdmin={list:()=>SDK.fetchJSON('/api/plugins/hermes-muse/profiles?profile=default'), change:(name,data)=>SDK.fetchJSON('/api/plugins/hermes-muse/profiles/'+encodeURIComponent(name)+'?profile=default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})};
 """
     + page
-    + "\nwindow.__HERMES_PLUGINS__.register('hermes-muse',makeMusePage(React,useScope,request,null));\n})();\n"
+    + "\nwindow.__HERMES_PLUGINS__.register('hermes-muse',makeMusePage(React,useScope,request,null,profileAdmin));\n})();\n"
 )
 (root / "desktop/plugin.js").write_text(
     """import React from 'react';

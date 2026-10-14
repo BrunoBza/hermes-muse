@@ -258,3 +258,13 @@ Before planned disable/removal, call installation_prepare with the original user
 Workers use public native delegation and respect delegation.* routing/reasoning/concurrency. New repeating watches are at least 30 minutes; ambiguous cron patterns are refused, once is exempt, existing schedules remain. Cron Feed-brief edits wait for the next existing tick.
 
 Memory acknowledgements follow actual receipts: saved, waiting approval, submitted but unconfirmed, failed, unchanged or unknown. The plugin stores only minimal correlation references. Approval completion, provider durability and automatic background-event merging remain host/provider contract limits; no core patches or new daemons are installed.
+
+## Unified Dashboard host (0.2.1)
+
+Install and enable the full Muse package in the default Hermes profile using Hermes plugin management. The Dashboard discovers this package and serves its authenticated page/API. The page initially lists registered profiles only; explicitly select one to view its Feed, Ideas and Goals. Default is labelled “managed by Hermes”: both UI and backend refuse its install/disable/remove operations.
+
+For another registered profile on this same host, the page can explicitly install and enable Muse, or disable it while retaining data. It uses native Hermes installer/enablement and Muse owned-task preparation. It never automatically enables all profiles. Only eligible tasks paused by this page are resumed; user pauses, schedules, targets and installation identities remain intact. Runtime activation receipts distinguish hot reload from tools retained by existing conversations. No cross-profile administration is added to muse_manage or native children.
+
+Profile paths come from Hermes root/home and registry APIs, including custom HERMES_HOME. Each lifecycle operation runs in a fresh target-profile process with the host's credential-scoping helper; read requests use explicit Views without changing process environment or initializing stores. Desktop retains current-profile reads and chat drafts.
+
+With terminal.backend=docker, only terminal execution enters Docker. Muse tools and namespaced companion skills remain dispatched by Hermes on the host, against the same active profile; no Muse mounts, copies or Docker-specific path branch is needed. A whole Hermes instance running in another container or remote HOME is a separate installation: equal profile names do not share state, and this page does not manage remote instances.

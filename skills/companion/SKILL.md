@@ -57,3 +57,7 @@ A promise is open until its actual result reaches the user or the user cancels i
 Hourly self-review uses operations_batch → muse_manage delegate → native parallel workers → findings and operations_commit. Child agents may call operations_evidence for assigned native references, but cannot advance the checkpoint or mutate Muse state. Full evidence stays available without filling the parent conversation with raw pages. See self-review for partial completion and recovery.
 
 Privacy: the signal inbox keeps first 8,000 characters and source/route identities. Newest500 remain; older processed rows are cleared on later intake only after both hourly/nightly cursors cover them; unprocessed backlog can exceed500. Native history/results/files have separate retention. Delegates are instructed to remain read-only, not sandboxed; host tools/permissions still apply.
+
+### Host and Docker terminals
+
+Muse tools execute in the current Hermes host/profile even when terminal.backend is docker. Use muse_manage and skill_view normally; do not copy Muse files into the terminal container or invent container paths. A separate Hermes instance has separate profiles/data. The default-host Dashboard manages only locally registered profiles after explicit user selection; its administration does not grant agents cross-profile writes.

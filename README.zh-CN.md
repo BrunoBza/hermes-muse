@@ -252,3 +252,9 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 独立验收修复：installation_prepare 只接受明确指向 Muse 且与 operation 匹配的当前整句命令，例如“请停用Muse插件”或“请卸载Muse插件”；引用、询问、否定、延后和无关删除不构成授权。旧 saved 回执只可在原回合告知，staged 跨轮仍是待确认。source_check 的 CAS 和实际更新共用 canonical 来源解析。
 
 **未解决的平台回归：** 当前 0.2.0 安全文件访问依赖 POSIX，尚未恢复原 Windows 支持。Windows CI 保留，未声称通过；需要安全的原生句柄适配，不能靠取消 symlink 检查降级。此版本仍未发布。
+
+## 统一 Dashboard（0.2.1）
+
+default 通过 Hermes 原生插件管理安装并启用完整 Muse，作为本机 Dashboard 页面/API 的入口。页面仅列当前宿主已注册 profiles，明确选择后才读取 Feed、点子和目标。default 标注由 Hermes 管理，前后端均拒绝从页面安装、停用或移除它。其他 profile 可明确安装/启用或停用；停用留数据，仅暂停经核实的自有任务，再启用仅恢复本页面暂停且仍有效的任务，保留用户暂停、频率、目标和安装标识。不会批量自动启用或扩展子代理写权限。
+
+terminal.backend=docker 只影响 terminal；Muse 工具及 companion skill 仍由 Hermes 宿主调度，使用同一当前 profile，无须新增挂载、复制或 Docker 路径分支。整个 Hermes 在独立容器/远端 HOME 中运行则是独立安装，同名 profile 不共享数据；页面不管理远端实例。

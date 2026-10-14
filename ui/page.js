@@ -1,7 +1,42 @@
-function makeMusePage(React, useScope, request, draft) {
+function makeMusePage(React, useScope, request, draft, profileAdmin) {
   const h = React.createElement;
   return function MusePage() {
-    const scope = useScope();
+    const hostScope = useScope();
+    const [profiles, setProfiles] = React.useState([]);
+    const [selected, setSelected] = React.useState(null);
+    const [managementBusy, setManagementBusy] = React.useState(false);
+    const [managementMessage, setManagementMessage] = React.useState('');
+    const [managementVersion, setManagementVersion] = React.useState(0);
+    const selectionRef = React.useRef(selected);
+    selectionRef.current = selected;
+    const pendingChange = React.useRef(null);
+    const selectedRow = profiles.find(row=>row.name===selected);
+    const scope = profileAdmin ? {...hostScope, profile:selected, key:hostScope.key+':'+selected+':'+managementVersion,
+      label:selected ? hostScope.label+' · '+selected : 'Select a profile on this Hermes host',
+      current:()=>hostScope.current() && selectionRef.current===selected} : hostScope;
+    React.useEffect(()=>{
+      if (!profileAdmin) return;
+      let active=true;setSelected(null);setProfiles([]);setManagementMessage('');
+      profileAdmin.list().then(value=>{if(active)setProfiles(value.profiles);}).catch(e=>{if(active)setManagementMessage(String(e.message||e));});
+      return ()=>{active=false;};
+    },[hostScope.key]);
+    async function changeProfile(operation) {
+      if (!selectedRow || selectedRow.read_only) return;
+      const target=selected;
+      setManagementBusy(true);setManagementMessage('');
+      if (!pendingChange.current || pendingChange.current.name!==target || pendingChange.current.data.operation!==operation) {
+        pendingChange.current={name:target,data:{operation,expected_revision:selectedRow.revision,request_id:crypto.randomUUID()}};
+      }
+      try {
+        const value=await profileAdmin.change(target,pendingChange.current.data);
+        const list=await profileAdmin.list();
+        if (!hostScope.current()) return;
+        setProfiles(list.profiles);setManagementVersion(n=>n+1);
+        if (selectionRef.current===target) setManagementMessage(value.partial ? 'Preparation is incomplete. Retry to continue the same operation.' : value.restart_required || value.activation?.restart_required ? 'Selection saved. Runtime activation needs attention; existing sessions may retain their previous tools.' : 'Profile updated. Existing conversations keep their current tools until a new session.');
+        if (!value.partial) pendingChange.current=null;
+      } catch(e) { if(hostScope.current())setManagementMessage(String(e.message||e)); }
+      finally {setManagementBusy(false);}
+    }
     const [tab, setTab] = React.useState('feed');
     const [query, setQuery] = React.useState('');
     const [topic, setTopic] = React.useState('');
@@ -14,6 +49,7 @@ function makeMusePage(React, useScope, request, draft) {
     const active = React.useRef(identity);
     active.current = identity;
     async function load(cursor) {
+      if (profileAdmin && (!selectedRow || !selectedRow.enabled)) {setBusy(false);return;}
       const token = ++generation.current, captured = identity;
       setBusy(true); setError('');
       try {
@@ -45,6 +81,16 @@ function makeMusePage(React, useScope, request, draft) {
     const fu = currentArticle?.metadata?.followup;
     return h('main', {style:{maxWidth:960,margin:'0 auto',padding:'clamp(16px,4vw,32px)',fontFamily:'inherit',lineHeight:1.6,overflowWrap:'anywhere'}},
       h('h1', null, 'Muse'), h('p', null, scope.label),
+      profileAdmin && h('section',{'aria-label':'Muse profiles',style:{padding:'16px 0'}},
+        h('label',null,'Profile ',h('select',{value:selected||'',disabled:managementBusy,onChange:e=>{setSelected(e.target.value||null);setQuery('');setTopic('');setManagementMessage('');},style:{padding:10,background:'transparent',color:'inherit',border:'1px solid #8888',borderRadius:8}},
+          h('option',{value:''},'Choose a profile…'),
+          ...profiles.map(row=>h('option',{key:row.name,value:row.name},row.name+' · '+(row.installed?(row.enabled?'enabled':'disabled'):'not installed')+(row.read_only?' · managed by Hermes':''))))),
+        selectedRow && h('p',null,(selectedRow.version?'Muse '+selectedRow.version+' · ':'')+(selectedRow.enabled?'Enabled':selectedRow.installed?'Disabled — data retained':'Not installed')),
+        selectedRow?.read_only && h('p',null,'Default is read-only here. Manage its installation with Hermes.'),
+        selectedRow && !selectedRow.read_only && button(selectedRow.enabled?'Disable Muse':'Install / enable Muse',()=>changeProfile(selectedRow.enabled?'disable':'enable'),managementBusy),
+        selectedRow && !selectedRow.read_only && h('p',null,'Disable retains data and pauses only owned Muse tasks. Enable resumes only tasks paused by this page that are still eligible; user pauses and schedules are preserved.'),
+        managementBusy && h('p',{role:'status'},'Applying the selected profile change…'),
+        managementMessage && h('p',{role:'status'},managementMessage)),
       h('nav', {'aria-label':'Muse sections',style:{display:'flex',gap:8,flexWrap:'wrap'}},
         ...['feed','ideas','goals'].map(name => button(name === 'feed' ? 'Feed' : name === 'ideas' ? 'Ideas' : 'Goals', () => setTab(name), tab === name))),
       tab === 'feed' && h('form', {onSubmit:e=>{e.preventDefault(); setArticle(null); load();},style:{display:'flex',gap:8,flexWrap:'wrap',margin:'20px 0'}},
