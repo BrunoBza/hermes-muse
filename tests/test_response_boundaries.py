@@ -27,6 +27,20 @@ class ResponseBoundaryTests(unittest.TestCase):
                     if field in result:
                         self.assertEqual(reply['result'][field], result[field])
 
+    def test_final_envelope_and_recovered_fields_share_budget(self):
+        result = {'blocked_topics': ['']}
+        size = len(Runtime._response(result).encode())
+        result['blocked_topics'] = ['x' * (256 * 1024 - size - 10)]
+        self.assertLess(len(Runtime._response(result).encode()), 256 * 1024)
+        envelope = {'ok': True, 'result': result, 'revision': 'r' * 64, 'recovered': True}
+        raw = Runtime._receipt(envelope, action='preferences')
+        reply = json.loads(raw)
+        self.assertLessEqual(len(raw.encode()), 256 * 1024)
+        self.assertEqual(reply['revision'], envelope['revision'])
+        self.assertTrue(reply['recovered'])
+        self.assertEqual(reply['result']['content_ref']['data'], {'kind': 'preferences', 'id': 'current'})
+        self.assertEqual(Runtime._receipt(reply, action='preferences'), raw)
+
     def test_oversized_delivery_rejected_before_reserving_budget(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = prepare(Path(tmp))

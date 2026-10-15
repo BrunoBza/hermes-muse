@@ -262,8 +262,14 @@ class Runtime:
 
     @staticmethod
     def _response(result, *, action=None, data=None):
+        return Runtime._receipt({"ok": True, "result": result}, action=action, data=data)
+
+    @staticmethod
+    def _receipt(envelope, *, action=None, data=None):
+        """Bound the final envelope, including journal revision/recovery fields."""
         from .content_io import DomainError
-        raw = json.dumps({"ok": True, "result": result}, ensure_ascii=False, allow_nan=False)
+        result = envelope.get("result") if envelope.get("ok") else None
+        raw = json.dumps(envelope, ensure_ascii=False, allow_nan=False)
         if len(raw.encode()) > 256 * 1024:
             from .contracts import CAS
             kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation',
@@ -277,14 +283,14 @@ class Runtime:
                 key = 'current'
             if action == 'followup_update' and (data or {}).get('goal_id'):
                 kind, key = 'goal', data['goal_id']
-            if kind and key:
+            if envelope.get("ok") and kind and key:
                 bounded = {'id': key, 'result_is_reference': True,
                     'content_ref': {'action': 'content_read', 'data': {'kind': kind, 'id': key}},
                     'instruction': 'State committed. Read its paginated content_ref. If this action accepts request_id, replay only the original key/arguments; do not repeat a committed change.'}
                 for field in ('changed', 'reviewed', 'partial', 'requires_host_action', 'final_response'):
                     if isinstance(result, dict) and field in result:
                         bounded[field] = result[field]
-                return Runtime._response(bounded)
+                return Runtime._receipt({**envelope, "result": bounded})
             raise DomainError("size_limit", "Response exceeds 256 KiB; request a smaller page or source/window batch")
         return raw
 

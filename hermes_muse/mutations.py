@@ -143,7 +143,11 @@ def invoke(runtime, args, kwargs, callback):
                     "idempotency_conflict", "request_id arguments changed"
                 )
             if old.get("result") is not None:
-                return json.dumps(old["result"], ensure_ascii=False)
+                raw = runtime._receipt(old["result"], action=action, data=data)
+                bounded = json.loads(raw)
+                if bounded != old["result"]:
+                    runtime.store.write("mutation_request", journal, {**old, "result": bounded})
+                return raw
             if kind and key:
                 try:
                     _, observed, recovered_revision = object_state(views, kind, key)
@@ -163,12 +167,13 @@ def invoke(runtime, args, kwargs, callback):
                         "revision": recovered_revision,
                         "recovered": True,
                     }
+                    raw = runtime._receipt(result, action=action, data=data)
                     runtime.store.write(
                         "mutation_request",
                         journal,
-                        {**old, "state": "complete", "result": result},
+                        {**old, "state": "complete", "result": json.loads(raw)},
                     )
-                    return json.dumps(result, ensure_ascii=False)
+                    return raw
             raise DomainError(
                 "outcome_unknown",
                 "Semantic request interrupted; inspect original object/receipt before any retry",
@@ -216,9 +221,10 @@ def invoke(runtime, args, kwargs, callback):
                 result["revision"] = object_state(views, kind, key)[2]
             except DomainError:
                 pass
+        raw = runtime._receipt(result, action=action, data=data)
         runtime.store.write(
             "mutation_request",
             journal,
-            {**intent, "state": "complete", "result": result},
+            {**intent, "state": "complete", "result": json.loads(raw)},
         )
-        return json.dumps(result, ensure_ascii=False)
+        return raw
