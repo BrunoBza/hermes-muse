@@ -1,0 +1,24 @@
+# Bounded context and checkpoints
+
+`muse_manage(action=context|status,data={})` returns a small directory, not all objects and not evidence that collections are empty. Follow its sections and refs. The 256 KiB response ceiling is a plugin transport/work budget, not a model-context size or authorization rule. Do not raise it, clear history or guess limit/view fields to recover.
+
+- Collections: `context {section:goal|feed|interest|idea|notice|run|source_check|finding|research,limit:25,cursor?}`. Follow next_cursor until null. Open each relevant ID using content_read for its body/metadata. Lists are revision-bound: cursor_expired means reread that section, not continue combining snapshots. No read-status is stored.
+- Large object metadata: when metadata_complete=false, follow metadata_ref. It returns explicitly labelled JSON metadata text in body pages. Keep its revision, concatenate all pages, then interpret the complete JSON; an individual chunk is not a complete record. Normal Markdown body paging remains separate.
+- Conversation evidence: `context {section:conversations,limit:25,cursor?}` lists descriptors, not transcript bodies. For each required session, call conversation_read with its session_id, revision and next_offset. Continue until complete. Call conversation_read with session_id alone (or descriptor=true) for a fresh descriptor. A change returns available=false with the current revision/next_offset: unchanged exact prefixes retain coverage, new/changed text must be read. Recheck current descriptors/revisions before notification_review. Children use read_only=true for history; their reads do not certify parent notice coverage. Quiet-hours, relevance review and actual transport receipts remain separate.
+
+## Signal review window (maintenance parent)
+
+1. Call `context {section:signals,job:memory-upkeep|nightly-review,limit:25}`. Keep window and through exactly. The index contains IDs, created timestamps, revisions and total_chars, not reviewed text.
+2. Enumerate every next_cursor with the same job/window; IDs at/before returned processed_through are already checkpointed and need not be processed again. Read each ID with `context {section:signals,job,window,id,offset:0,length:12000}` and follow next_offset. Long signals need all chunks. This records served ranges, not a semantic judgment or native memory write.
+3. After substantive review and successful necessary saves, call `review_complete {job,window,through,up_to:<last fully processed timestamp>,summary}`. Every signal at that timestamp must have been fully read; unread ties are rejected. For an empty window, use through. Never move the checkpoint past a failed write.
+4. Continue the same window for its remaining IDs; a completed checkpoint is not run_complete. New signals created after through belong to the next window. An edit/deletion or backdated insertion invalidates this window explicitly: open a new one from the persisted checkpoint. Keep partial/run gaps when interrupted.
+
+No signal text is copied into the review ledger. A window is a reference/range receipt in existing Muse records, not another authorization service. Complete a real maintenance run only after its required operation audit/artifacts are also complete.
+
+## Revisions, findings and retries
+
+Copy revision strings verbatim from tool data. Do not retype, normalize or reconstruct them. revision_conflict means reread and merge; retrying a mistyped value cannot recover. A new logical merged request uses a new request_id; replay the same exact logical request with the same key when its result is uncertain.
+
+Create finding_record with expected_revision="absent", a unique request_id, evidence and the required finding fields. For a new finding omit id: the service derives it from returned operations evidence refs. For an existing finding, first content_read(kind=finding,id), then use that revision. An unavailable object is not a reason to omit the create revision. A finding reports evidence; closing it still needs verification and disclosure or a no_notice_reason.
+
+A successful oversized mutation may return result_is_reference/content_ref. It has committed: read the reference; do not repeat the mutation with a new key. Context overview and collection reads no longer reconcile notifications; actual notification actions retain their normal lifecycle checks.

@@ -122,7 +122,8 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
             },
         ),
     )
-    recent = call("context")["conversation_revisions"]
+    from tool_client import conversations
+    recent = {sid: value["revision"] for sid,value in conversations(call).items() if value.get("total_text_chars")}
     call(
         "notification_review",
         arguments(

@@ -40,15 +40,15 @@ def run(home):
             record(action,result)
             assert result['ok'] is ok,result
             return result.get('result') if ok else result
-        context=call('context');state=context['recent_conversations']['source']
-        assert not state['complete'] and len(state['messages'])<=24
-        assert sum(len(m['text']) for m in state['messages'])<=24000
+        state=call('context',{'section':'conversations'})['items'][0]
+        assert not state['complete'] and 'messages' not in state
+        assert state['total_text_chars'] > 24000
         cursor=0;body=''
         while cursor is not None:
             part=call('conversation_read',{'session_id':'source','revision':state['revision'],'offset':cursor})
             body+=''.join(m['text'] for m in part['messages']);cursor=part['next_offset']
         assert part['complete'] and body==''.join(texts)
-        assert call('context')['recent_conversations']['source']['complete']
+        assert call('context',{'section':'conversations'})['items'][0]['complete']
         db.append_message('source','assistant','A new correction invalidates the previous full revision.')
         changed=call('conversation_read',{'session_id':'source','revision':state['revision']})
         assert not changed['available'] and not changed['complete']

@@ -295,20 +295,27 @@ class Companion:
         sessions = self.store.rows(db, "session") if db is not None else self.store.all("session")
         reader = getattr(self.host, "conversation", None)
         from .conversation import previews
-        states = {s["id"]: {**reader(s["id"], self.clock() - DAY), "session_id": s["id"]} for s in sessions} if reader else {}
+        states = {s["id"]: self.conversation_state(s["id"], db=db) for s in sessions} if reader else {}
         return previews(self.store, states, self.clock(), db, served=served)
 
+    def conversation_state(self, sid, db=None):
+        prior = self.store.get(db, 'conversation_window', digest(sid), {}) if db is not None else self.store.read('conversation_window', digest(sid), {})
+        since = prior.get('since', self.clock() - DAY)
+        return {**self.host.conversation(sid, since), 'session_id': sid, 'since': since}
+
     def conversation_read(self, data):
-        from .conversation import page
+        from .conversation import page, descriptor
         sid = bounded(data.get("session_id"), 200)
         if not self.store.read("session", sid):
             raise ValueError("Conversation must belong to a tracked private source session")
-        state = {**self.host.conversation(sid, self.clock() - DAY), "session_id": sid}
+        state = self.conversation_state(sid)
+        if data.get('descriptor') or not data.get('revision'):
+            return descriptor(self.store, state, self.clock())
         return page(self.store, state, data, self.clock())
 
     @staticmethod
     def conversation_revisions(states):
-        return {sid: value["revision"] for sid, value in states.items() if value.get("available") and (value.get("total_messages") or value.get("messages"))}
+        return {sid: value["revision"] for sid, value in states.items() if value.get("available") and (value.get("total_messages") or value.get("total_text_chars") or value.get("messages"))}
 
     def conversation_block(self, row, states):
         if row.get("session_id") and not states.get(row["session_id"], {}).get("available"):
@@ -330,9 +337,8 @@ class Companion:
         revisions = self.conversation_revisions(states)
         if any(v.get("complete") is False for v in states.values()) or data.get("conversation_revisions", {}) != revisions:
             # Only evidence actually returned to the caller counts as served.
-            states = self.conversation_states(served=True)
-            return {"reviewed": False, "reason": "Conversation changed or preview is partial; inspect returned evidence and finish conversation_read pages before review",
-                    "recent_conversations": states, "conversation_revisions": self.conversation_revisions(states)}
+            return {"reviewed": False, "reason": "Conversation changed or evidence is partial; read descriptors and every missing conversation_read page before review",
+                    "continuation": {"action": "context", "data": {"section": "conversations", "limit": 25}}}
         verdict = data.get("verdict")
         if verdict not in {"relevant", "resolved", "superseded"}:
             raise ValueError("verdict must be relevant, resolved or superseded")
@@ -411,7 +417,7 @@ class Companion:
                 "notification_history": history,
                 "feed": self.feed_list({"limit": 15})["items"]}
 
-    def review_complete(self, data):
+    def review_complete(self, data, *, require_window=False):
         job = data.get("job")
         if job not in {"memory-upkeep", "nightly-review", "feed-pulse", "proactive-watch", *GOVERNANCE_JOBS}:
             raise ValueError("Unknown review job")
@@ -422,17 +428,21 @@ class Companion:
             raise ValueError("Review cursor must not exceed its snapshot or the current time")
         with self.store.transaction() as db:
             old = self.store.get(db, "cursor", job, 0)
+            if require_window and job in {"memory-upkeep", "nightly-review"}:
+                from .context_pages import check_review
+                check_review(self, data, db, old, up_to, through)
             if job in {"memory-upkeep", "nightly-review"}:
                 pending = sorted((s for s in self.store.rows(db, "signal") if s["created"] > old and not is_background_message(s.get("text"))), key=lambda s: s["created"])
-                if len(pending) > 25 and up_to > self.signal_batch(pending)[-1]["created"]:
+                if not require_window and len(pending) > 25 and up_to > self.signal_batch(pending)[-1]["created"]:
                     raise ValueError("Cursor skips unseen signals; process the returned batch first")
             remaining = [r for r in pending if max(old, up_to) < r["created"] <= through] if job in {"memory-upkeep", "nightly-review"} else []
             self.store.put(db, "cursor", job, max(old, up_to))
             self.store.put(db, "meta", "last_review:" + job, {"at": now, "summary": bounded(data["summary"], 2000),
                                                            "complete": not remaining, "scope": "checkpoint", "job_complete": False, "remaining": len(remaining)})
         return {"job": job, "processed_through": stamp(max(old, up_to)), "through": stamp(through),
-                "complete": not remaining, "scope": "checkpoint", "job_complete": False, "remaining": len(remaining), "next_user_signals": self.signal_batch(remaining),
-                "instruction": "Process next_user_signals now and call review_complete again with the same through; do not finish this run yet." if remaining else "This checkpoint is complete, not the whole task. Finish required artifacts/operation review, then call run_complete in the owned Cron."}
+                "complete": not remaining, "scope": "checkpoint", "job_complete": False, "remaining": len(remaining), **({"next_user_signals": self.signal_batch(remaining)} if not require_window else {}),
+                "continuation": {"action": "context", "data": {"section": "signals", "job": job, "window": data.get("window")}} if require_window else None,
+                "instruction": "Continue the signal window (legacy internal callers: next_user_signals) and call review_complete with the same through; do not finish this run yet." if remaining else "This checkpoint is complete, not the whole task. Finish required artifacts/operation review, then call run_complete in the owned Cron."}
 
     def calendar_window(self, data):
         return window(self.host.local_now(self.clock()), data.get("mode", "rolling"))

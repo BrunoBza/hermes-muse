@@ -1,3 +1,5 @@
+Use companion references/context.md: context/status are section directories. Follow collection cursors and conversation descriptors/body pages; an index is not reviewed evidence.
+
 # Personal briefings
 
 Use this procedure for a user-requested daily or periodic overview. The subscription determines the schedule and scope. It is separate from patrols that interrupt only for worthwhile changes. Use the existing native Cron when updating an existing report, preserving its ID, schedule, model, destination and pause state. Do not create a second subscription or silently import unrelated jobs. Installation itself creates only the six fixed Muse jobs; a subscribed report is a user-managed native Cron using this Skill, not an entry in muse/install.json.

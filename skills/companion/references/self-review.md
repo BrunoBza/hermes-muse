@@ -1,3 +1,5 @@
+Read companion references/context.md for the bounded signal window and section pagination contract. Never expect unbounded context arrays.
+
 # Check your own work
 
 Own actions in this conversation, your background jobs and delegated work as one assistant. After a consequential creation, change or deletion, compare the user's actual intent with the operation, tool receipt and current state. Look for duplicate watches, unnecessary additions/deletions, unintended scope changes, mistaken notice content and promised work left unfinished. Recoverable mistakes need correction and verification, not a ceremony or a new monitoring subscription.

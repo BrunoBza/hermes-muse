@@ -154,6 +154,10 @@ def snapshot(home, *, now=None, session_id=None, offset=0, exclude_turn=None, ro
         orphans = [r for r in records.get(RECEIPT_KIND, []) if not r.get("intent_id")
                    and (not session_id or r.get("session_id") == session_id)]
         result["orphan_total"] = len(orphans)
+        result["next_offset"] = following if following < max(len(due), len(turns), len(orphans)) else None
+        from .content_io import revision
+        from .views import canonical, Views
+        result["snapshot_revision"] = revision(canonical([Views(home).scope(), due, turns, orphans]))
         result["orphan_receipts"] = orphans[int(offset):int(offset) + LIMIT]
         result["partial_selection"] |= len(orphans) > LIMIT
         sessions = {r["session_id"] for r in due}
@@ -293,7 +297,13 @@ class Followups:
     def update(self, data, *, session_id="", turn_id=""):
         kind = data.get("kind")
         if kind == "due":
-            return snapshot(self.store.home, now=self.service.clock(), offset=int(data.get("offset", 0)), rotate=False)
+            value = snapshot(self.store.home, now=self.service.clock(), offset=int(data.get("offset", 0)), rotate=False)
+            if data.get('offset', 0) and not data.get('snapshot_revision'):
+                raise ValueError('Followup continuation requires snapshot_revision; enumerate IDs before changing them')
+            if data.get('snapshot_revision') and data['snapshot_revision'] != value.get('snapshot_revision'):
+                from .content_io import DomainError
+                raise DomainError('revision_conflict', 'Followup selection changed; restart at offset=0, then process IDs with current object revisions')
+            return value
         if kind == "evidence":
             if data.get("goal_id"):
                 goal, _, fingerprint = self._goal(data["goal_id"])

@@ -1,3 +1,11 @@
+# 0.2.2 — bounded context and maintenance evidence (local candidate)
+
+- Discoverable context/status section pages and frozen, reference-only signal review windows; reject unread checkpoint advances.
+- Current conversation descriptors and unchanged-prefix coverage let long evidence reads survive appends without skipping corrections.
+- Page oversized object metadata, return reference receipts for oversized committed mutations, and preserve CAS/idempotent replay.
+- Fix orphan-only followup continuation, bind pages to selection revision; document existing Feed correction and finding absent creation.
+- Keep default Dashboard/profile management, child read boundaries, notification budgets and transport semantics. No deployment implied.
+
 # 0.2.1 — unified local profile Dashboard
 
 - Full default installation hosts the page; explicit registered-profile selection before content reads.

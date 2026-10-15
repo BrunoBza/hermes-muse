@@ -1,3 +1,5 @@
+Use companion references/context.md: context/status are section directories. Follow collection cursors and conversation descriptors/body pages; an index is not reviewed evidence.
+
 # Weekly value review and monthly structure audit
 
 Review how well this profile serves its user. Consider verified outcomes alongside model/tool spending, coordination, attention and time to a useful result. Prefer simpler work and reusable results where the evidence supports them. Do not equate generated output, task counts or more agents with value.
@@ -6,7 +8,7 @@ The weekly review looks back seven days at outcomes, wasted effort, next-week ad
 
 ## Evidence
 
-Start with muse_manage status: reviews contains the latest weekly/monthly summaries, and installation identifies owned jobs. Use existing session search and native Cron execution/output records for history. Read only the relevant parts of current-profile instructions and actual user feedback. If usage/cost data or session history is unavailable, disclose that gap. Do not scan other profiles, connect to other machines, require an external notes service, read secrets, or copy private content into public artifacts.
+Start with muse_manage status: reviews contains the latest weekly/monthly summaries, and installation_ref points to the owned-jobs projection. Use existing session search and native Cron execution/output records for history. Read only the relevant parts of current-profile instructions and actual user feedback. If usage/cost data or session history is unavailable, disclose that gap. Do not scan other profiles, connect to other machines, require an external notes service, read secrets, or copy private content into public artifacts.
 
 These reviews may assess whether a relevant skill is being used well, but they do not run a separate skill audit, optimize all skills or replace Curator. Nightly maintenance already handles memory/alignment; weekly/monthly reports should avoid repeating it.
 

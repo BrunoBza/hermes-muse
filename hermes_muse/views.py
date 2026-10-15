@@ -350,6 +350,7 @@ class Views:
             "offset",
             "length",
             "revision",
+            "part",
             "cursor",
             "limit",
             "topic",
@@ -406,8 +407,11 @@ class Views:
                     )
                     if k in metadata
                 }
+                truncated = any(isinstance(v, str) and len(v) > 512 for v in summary.values())
+                summary = {k: v[:512] if isinstance(v, str) else v for k, v in summary.items()}
                 items.append(
                     {
+                        "summary_truncated": truncated,
                         "id": key if kind == "goal_file" else item,
                         **({"resource": item} if kind == "goal_file" else {}),
                         "revision": rev,
@@ -438,7 +442,9 @@ class Views:
                     raise DomainError(
                         "cursor_expired", "List changed; restart from first page"
                     ) from exc
-            end = offset + limit
+            end = min(len(items), offset + limit)
+            while end > offset + 1 and len(canonical(items[offset:end])) > 128 * 1024:
+                end -= 1
             cursor = (
                 base64.urlsafe_b64encode(
                     canonical({"snapshot": snapshot, "offset": end})
@@ -473,12 +479,26 @@ class Views:
                 "Content changed; restart reading",
                 current_revision=rev,
             )
+        part = data.get('part', 'body')
+        if part not in {'body', 'metadata'}:
+            raise DomainError('invalid_argument', 'part must be body or metadata')
+        metadata_ref = None
+        if part == 'metadata':
+            body, metadata = json.dumps(metadata, ensure_ascii=False, sort_keys=True), {}
+        elif len(canonical(metadata)) > 32768:
+            metadata_ref = {'action': 'content_read', 'data': {'kind': kind, 'id': key, 'part': 'metadata',
+                            'revision': rev, 'scope_token': scope, **({'resource': data['resource']} if data.get('resource') else {})}}
+            metadata = {k: v for k, v in metadata.items() if (k in {'id', 'status', 'title'} and len(str(v)) <= 1000)
+                        or (k == 'followup' and len(canonical(v)) <= 16384)}
         end = offset + length
         return {
             **base,
             "id": key,
             "revision": rev,
             "metadata": metadata,
+            "metadata_complete": metadata_ref is None,
+            "metadata_ref": metadata_ref,
+            "body_format": "json_metadata_text" if part == "metadata" else "text",
             "body": body[offset:end] if body is not None else None,
             "total_chars": len(body or ""),
             "next_offset": end if end < len(body or "") else None,

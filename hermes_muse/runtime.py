@@ -12,15 +12,15 @@ from .handoff import MARKER, receiving_instructions, render_result
 from .audit import Audit
 from .host import HermesHost, ROOT, profile_scope
 from .service import Companion
-from .store import GOVERNANCE_JOBS, Store, is_background_message
+from .store import Store, is_background_message
 from .followup import context as followup_context
 
 log = logging.getLogger(__name__)
 ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context refreshes state and returns real user signals; child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Never invent a signal ID, delivery receipt or authorization.",
-          "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status."}}, "required": ["action"], "additionalProperties": False}}
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Never invent a signal ID, delivery receipt or authorization.",
+          "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
 
 
 def session_info():
@@ -108,12 +108,15 @@ class Runtime:
                 raise DomainError("permission_denied", "Child tasks may read current-profile evidence; state changes and checkpoints belong to the parent")
             if delegated and action in {"context", "status"}:
                 view = Views(self.home)
-                result = {"scope_token": view.scope(), "read_semantics": "pure read; no tracking, reconciliation or coverage writes",
-                          "collections": {kind: view.read({"kind": kind}) for kind in ("goal", "feed", "idea", "notice", "run", "source_check")},
-                          "instruction": "Use content_read with each collection cursor or object ID for more. The parent owns updates and audit checkpoints."}
-                if action == "status":
-                    result["installation"] = view.read({"kind": "installation", "id": "current"})
-                return self._response(result)
+                view.check_scope(data.get('scope_token'))
+                from .context_pages import COLLECTIONS
+                section = data.get('section', 'overview')
+                if section in COLLECTIONS:
+                    return self._response(view.read({'kind': section, **{k:v for k,v in data.items() if k not in {'section','job','window'}}}))
+                if section != 'overview':
+                    raise DomainError('permission_denied', 'Review windows and coverage belong to the parent; use conversation_read(read_only=true) for child history')
+                return self._response({'scope_token': view.scope(), 'read_semantics': 'pure read; parent owns review windows/checkpoints',
+                    'sections': {kind: {'action':'content_read','data':{'kind':kind,'limit':25}} for kind in COLLECTIONS}})
             if action == "operations_evidence":
                 return self._response(self.service.operations.evidence(data))
             if action == "conversation_read" and (delegated or data.get("read_only")):
@@ -169,14 +172,10 @@ class Runtime:
                     view = None
                     if len(parts) == 3 and parts[0] == "cron":
                         view = self.host.manifest()["jobs"].get(parts[1], {}).get("key")
-                    result = self.service.context(view=view)
-                    result["memory_feedback"] = self.memory_feedback.candidates(kwargs.get("session_id", ""))
-                    result["scope_token"] = Views(self.home).scope()
-                    result["read_semantics"] = "refreshes and reconciles; use content_read for a pure read"
-                    if action == "status":
-                        result["installation"] = self.host.manifest()
-                        result["reviews"] = {job: self.store.read("meta", "last_review:" + job)
-                                             for job in GOVERNANCE_JOBS}
+                    from .context_pages import context
+                    result = context(self.service, data, view=view)
+                    if data.get('section', 'overview') == 'overview':
+                        result['memory_feedback'] = self.memory_feedback.candidates(kwargs.get('session_id', ''))
                 elif action in {"operations_batch", "operations_commit"}:
                     audit = Audit(self.service.operations)
                     from agent.subagent_lifecycle import get_active_subagent_parent
@@ -215,7 +214,7 @@ class Runtime:
                         result = {"complete": complete, "through": self.service.clock(), "goal_id": goal["id"],
                                   "goal_status": goal["status"], "stop_condition": data["stop_condition"], "source_check_ids": refs}
                     else:
-                        result = self.service.review_complete(data)
+                        result = self.service.review_complete(data, require_window=True)
                     self.service.runs.stage(run, "review", {"complete": result["complete"], "through": result["through"], "summary": data["summary"]})
                 elif action == "preferences":
                     result = self.service.preference_update({k:v for k,v in data.items() if k != "signal_id"}, cron=info["cron"] or str(kwargs.get("task_id", "")).startswith("cron:"))
@@ -252,7 +251,7 @@ class Runtime:
                         elif not info["cron"]:
                             data["session_id"] = info["id"]
                     result = getattr(self.service, action)(data)
-            return self._response(result)
+            return self._response(result, action=action, data=data)
         except Exception as exc:
             log.warning("Hermes Muse action %s failed: %s", args.get("action"), exc)
             error = {"ok": False, "error": str(exc), "code": getattr(exc, "code", "invalid_argument"), "retryable": getattr(exc, "code", "") in {"revision_conflict", "cursor_expired", "source_unavailable"}, **getattr(exc, "details", {})}
@@ -261,10 +260,21 @@ class Runtime:
             return json.dumps(error, ensure_ascii=False)
 
     @staticmethod
-    def _response(result):
+    def _response(result, *, action=None, data=None):
         from .content_io import DomainError
         raw = json.dumps({"ok": True, "result": result}, ensure_ascii=False, allow_nan=False)
         if len(raw.encode()) > 256 * 1024:
+            from .contracts import CAS
+            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea'}
+            kind = kinds.get(action)
+            if action == 'feedback':
+                kind = {'notification': 'notice', 'interest': 'interest'}.get((data or {}).get('kind'))
+            record = result.get('notification', result) if isinstance(result, dict) else {}
+            key = record.get('id') if isinstance(record, dict) else None
+            if kind and key:
+                return json.dumps({'ok': True, 'result': {'id': key, 'result_is_reference': True,
+                    'content_ref': {'action': 'content_read', 'data': {'kind': kind, 'id': key}},
+                    'instruction': 'Mutation committed. Read the result through its paginated content_ref; reuse the original request_id for a replay, never repeat the write with a new key.'}}, ensure_ascii=False)
             raise DomainError("size_limit", "Response exceeds 256 KiB; request a smaller page or source/window batch")
         return raw
 

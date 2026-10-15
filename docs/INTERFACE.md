@@ -4,10 +4,10 @@ One registered tool, `muse_manage(action, data)`, with 41 actions. Models never 
 
 | Action | Data fields | Concurrency |
 |---|---|---|
-| `context` | `` | Action-specific token/revision or pure read |
-| `status` | `` | Action-specific token/revision or pure read |
-| `conversation_read` | `session_id revision offset read_only since until` | Action-specific token/revision or pure read |
-| `content_read` | `kind id resource scope_token offset length revision cursor limit topic query` | Action-specific token/revision or pure read |
+| `context` | `section job window cursor limit id offset length revision scope_token part` | Action-specific token/revision or pure read |
+| `status` | `section job window cursor limit id offset length revision scope_token part` | Action-specific token/revision or pure read |
+| `conversation_read` | `session_id revision offset read_only since until descriptor` | Action-specific token/revision or pure read |
+| `content_read` | `kind id resource scope_token offset length revision cursor limit topic query part` | Action-specific token/revision or pure read |
 | `content_write` | `kind id resource scope_token body expected_revision request_id signal_id` | Action-specific token/revision or pure read |
 | `memory_feedback_review` | `receipt_id decision reason expected_revision request_id` | Action-specific token/revision or pure read |
 | `installation_prepare` | `operation signal_id expected_revision request_id` | Action-specific token/revision or pure read |
@@ -38,18 +38,20 @@ One registered tool, `muse_manage(action, data)`, with 41 actions. Models never 
 | `operations_complete` | `token summary` | Action-specific token/revision or pure read |
 | `operations_commit` | `batch reviews` | Action-specific token/revision or pure read |
 | `finding_record` | `id evidence summary impact status verification disclosure no_notice_reason expected_revision request_id scope_token` | Required revision + request key |
-| `review_complete` | `job up_to through summary goal_id stop_condition source_check_ids` | Action-specific token/revision or pure read |
+| `review_complete` | `job up_to through summary goal_id stop_condition source_check_ids window` | Action-specific token/revision or pure read |
 | `run_complete` | `outcome summary gaps` | Action-specific token/revision or pure read |
 | `delegate` | `goal_id goal tasks context output_schema images action subagent_id message` | Action-specific token/revision or pure read |
 | `research_start` | `items goal_id context` | Action-specific token/revision or pure read |
 | `research_status` | `id` | Action-specific token/revision or pure read |
 | `forget` | `kind object_kind id resource signal_id external_status_verified expected_revision request_id scope_token` | Required revision + request key |
-| `followup_update` | `kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id` | Action-specific token/revision or pure read |
+| `followup_update` | `kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset snapshot_revision disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id` | Action-specific token/revision or pure read |
 
-See [content access](../skills/companion/references/content.md) for kinds, resource mapping and recovery. The notification prepare/queue/handoff aliases share the same implementation. `content_read` and UI never construct Store or Runtime; parent context/status do refresh/reconcile and must not be used for UI GET; child projections are pure.
+See [content access](../skills/companion/references/content.md) for kinds, resource mapping and recovery. The notification prepare/queue/handoff aliases share the same implementation. `content_read` and UI never construct Store or Runtime; parent context/status bind native maintenance and record explicit review-window/coverage receipts but no longer aggregate/reconcile all notifications; they are not UI GET endpoints. Child projections are pure.
 
 Native children may read content_read/feed_list/operations_evidence/conversation_read/calendar_window/calendar_view within the host profile and private-user boundary. Child context/status return pure paginated projections before track/bind/reconcile. operations_evidence indexes use offset/limit and next_offset; bodies use ref/offset/length. session_id/job_id/since/until narrow saved receipt evidence. conversation_read is always pure for children; parent default retains served coverage, while read_only=true enables pure history with since/until and revision-checked continuation. operations_read/batch and all writes/checkpoints remain parent-only. No model-supplied profile/home or new grant authority.
 
 ## Authenticated Dashboard lifecycle
 
 GET /profiles lists native registered profile metadata. POST /profiles/{name} accepts exactly operation=enable|disable, expected_revision and request_id. Default is refused server-side, including remove requests. No delete operation exists. Content GETs accept selected_profile for explicit local selection while host authentication/enablement remains profile=default. Content remains read-only; administration invokes official lifecycle in an isolated profile process. This is not an agent tool or child capability.
+
+Context and review window migration: see [context procedure](../skills/companion/references/context.md). All model signal checkpoints now require its returned window; internal legacy service calls are not the public tool contract. Metadata pages are explicit JSON text chunks, joined before interpretation.

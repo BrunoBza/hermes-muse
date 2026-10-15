@@ -73,10 +73,19 @@ def _coverage(store, state, ranges, now, db=None):
     total = sum(len(m['text']) for m in state['messages'])
     with (nullcontext(db) if db is not None else store.transaction()) as db:
         previous = store.get(db, 'conversation_window', key, {})
+        fingerprints = [[m.get('id'), digest(json.dumps(m, ensure_ascii=False, sort_keys=True)), len(m['text'])] for m in state['messages']]
+        old_ranges = previous.get('ranges', [])
         if previous.get('revision') != state['revision']:
-            previous = {}
-        covered = _merge(previous.get('ranges', []) + ranges)
-        store.put(db, 'conversation_window', key, {'revision': state['revision'], 'ranges': covered, 'at': now})
+            # Preserve only the exact unchanged prefix; appended evidence still must be read.
+            prefix = 0
+            for old, current in zip(previous.get('fingerprints', []), fingerprints):
+                if old != current:
+                    break
+                prefix += current[2]
+            old_ranges = [[lo, min(hi, prefix)] for lo, hi in old_ranges if lo < prefix]
+        covered = _merge(old_ranges + ranges)
+        store.put(db, 'conversation_window', key, {'revision': state['revision'], 'ranges': covered,
+                  'fingerprints': fingerprints, 'since': state.get('since', previous.get('since', now - 86400)), 'at': now})
     return total == 0 or covered == [[0, total]]
 
 
@@ -113,9 +122,22 @@ def previews(store, states, now, db=None, served=True):
     return result
 
 
+def descriptor(store, state, now):
+    if not state.get('available'):
+        return {'session_id': state['session_id'], 'available': False, 'complete': False}
+    complete = _coverage(store, state, [], now)
+    row = store.read('conversation_window', digest(state['session_id']), {})
+    ranges = row.get('ranges', [])
+    first_gap = ranges[0][1] if ranges and ranges[0][0] == 0 else 0
+    return {'session_id': state['session_id'], 'available': True, 'revision': state['revision'],
+            'complete': complete, 'total_text_chars': sum(len(m['text']) for m in state['messages']),
+            'next_offset': None if complete else first_gap,
+            'instruction': 'Use conversation_read(session_id,revision,offset=next_offset). On changes, reread this descriptor; unchanged prefixes retain coverage, changed/new text requires reading.'}
+
+
 def page(store, state, data, now, *, record_coverage=True):
     if not state.get('available') or state['revision'] != data.get('revision'):
-        return {'available': False, 'complete': False, 'reason': 'Conversation changed or is unavailable; refresh context. No coverage transferred.'}
+        return {**(descriptor(store, state, now) if record_coverage else {}), 'available': False, 'complete': False, 'reason': 'Conversation changed or is unavailable; use the returned current revision/next_offset or refresh its descriptor.'}
     offset = data.get('offset', 0)
     total = sum(len(m['text']) for m in state['messages'])
     if type(offset) is not int or not 0 <= offset <= total:
@@ -126,13 +148,17 @@ def page(store, state, data, now, *, record_coverage=True):
         following = position + len(m['text'])
         lo, hi = max(offset, position), min(end, following)
         if hi > lo:
-            messages.append({**m, 'text': m['text'][lo-position:hi-position],
-                             'message_offset': lo-position, 'text_chars': len(m['text']),
-                             'truncated': lo > position or hi < following})
+            item = {**m, 'text': m['text'][lo-position:hi-position],
+                    'message_offset': lo-position, 'text_chars': len(m['text']),
+                    'truncated': lo > position or hi < following}
+            if messages and len(json.dumps(messages + [item], ensure_ascii=False).encode()) > 128 * 1024:
+                end = lo
+                break
+            messages.append(item)
         position = following
     complete = _coverage(store, state, [[offset, end]], now) if record_coverage else end == total
     return {'available': True, 'session_id': state['session_id'], 'revision': state['revision'],
-            'messages': messages, 'offset': offset, 'next_offset': end if end < total else None,
+            'messages': messages, 'offset': offset, 'next_offset': end if end < total else (descriptor(store, state, now)['next_offset'] if record_coverage and not complete else None),
             'total_text_chars': total, 'complete': complete, 'coverage_recorded': record_coverage,
             'instruction': 'Read every relevant chunk; coverage is served evidence, not semantic verification or authority. A page endpoint is not a processing watermark.'}
 

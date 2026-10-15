@@ -153,7 +153,7 @@ def main():
                     _deliver_to_bot_chat({"id": patrol, "name": "muse-proactive-watch", "execution_id": attempt["id"]}, final, "")
                     assert deliver.call_args.kwargs["delivery_id"] == bot_receipt_key(home, patrol, attempt["id"])
                 context = json.loads(call_registered({"action": "context"}, task_id="cron:" + patrol + ":" + attempt["id"]))["result"]
-                assert context["nightly_user_signals"] == []
+                assert context["job"] == "proactive-watch" and "signal_reviews" in context
                 finish_execution(attempt["id"], success=True, delivery_outcome="delivered")
                 runtime.host.reconcile()
                 assert runtime.store.read("notification", notice["id"])["status"] == "sent"
@@ -227,8 +227,9 @@ def main():
                     runtime.service.signal("history-user", "native-history", "Please diagnose this screenshot.")
                     stale = runtime.service.notification_add({"event_key": "screenshot-stale", "message": "Please send another screenshot.",
                         "rationale": "Regression fixture", "sources": ["fixture"], "verified_at": time.time(), "expires": time.time()+3600})
-                    inspected = json.loads(call_registered({"action": "context"}))["result"]
-                    assert inspected["recent_conversations"]["native-history"]["complete"]
+                    from tool_client import conversations
+                    inspected = conversations(lambda action,data: json.loads(call_registered({'action':action,'data':data}))['result'])
+                    assert inspected['native-history']['complete']
                     review = runtime.service.notification_review({"id": stale["id"], "conversation_revisions": {"native-history": history["revision"]},
                         "verdict": "resolved", "reason": "Native history confirms the completed diagnosis was already delivered"})
                     assert review["notification"]["status"] == "cancelled"

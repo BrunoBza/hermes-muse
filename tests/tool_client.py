@@ -133,3 +133,17 @@ def close_containers():
         flush=True,
     )
     _containers.clear()
+
+
+def conversations(call):
+    states = {}
+    data = {'section':'conversations', 'limit':25}
+    while True:
+        listing = call('context', data)
+        for row in listing['items']:
+            while row['available'] and not row['complete']:
+                row = call('conversation_read', {'session_id':row['session_id'], 'revision':row['revision'], 'offset':row['next_offset']})
+            states[row['session_id']] = row
+        if not listing['next_cursor']:
+            return states
+        data['cursor'] = listing['next_cursor']

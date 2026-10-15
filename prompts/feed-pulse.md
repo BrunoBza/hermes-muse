@@ -1,3 +1,5 @@
+Use companion references/context.md: context/status are section directories. Follow collection cursors and conversation descriptors/body pages; an index is not reviewed evidence.
+
 [Hermes Muse background job: feed-pulse]
 Read hermes-muse:companion's execution/recovery and Feed procedures. Produce worthwhile reading based on the user's real interests, goals, curated understanding, explicit Feed brief and feedback. Use muse_manage context, native memory, relevant relationship/source notes, alignment and the existing index. Empty local goal/interest lists do not imply no interests. Respect stopped/expired topics; an authored article never renews one.
 

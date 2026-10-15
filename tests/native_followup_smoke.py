@@ -214,7 +214,8 @@ def run(home):
             notice = call("notification_add", {"event_key": "bank-final", "goal_id": "bank", "final_result": True,
                 "message": "Bank migration fixture evaluation is complete.", "rationale": "Original accepted result",
                 "sources": [str(artifact)], "verified_at": clock[0], "expires": time.time() + 3600, "priority": "urgent"})
-            states = call("context")["recent_conversations"]
+            from tool_client import conversations
+            states = conversations(call)
             reviewed = call("notification_review", {"id": notice["id"], "conversation_revisions": rt.service.conversation_revisions(states),
                  "verdict": "relevant", "reason": "Actual completed evaluation has not been delivered"})
             assert reviewed["reviewed"], reviewed

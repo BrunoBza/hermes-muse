@@ -3,10 +3,10 @@
 from .content_io import DomainError
 
 FIELDS = {
-    "context": "",
-    "status": "",
-    "conversation_read": "session_id revision offset read_only since until",
-    "content_read": "kind id resource scope_token offset length revision cursor limit topic query",
+    "context": "section job window cursor limit id offset length revision scope_token part",
+    "status": "section job window cursor limit id offset length revision scope_token part",
+    "conversation_read": "session_id revision offset read_only since until descriptor",
+    "content_read": "kind id resource scope_token offset length revision cursor limit topic query part",
     "content_write": "kind id resource scope_token body expected_revision request_id signal_id",
     "memory_feedback_review": "receipt_id decision reason expected_revision request_id",
     "installation_prepare": "operation signal_id expected_revision request_id",
@@ -37,13 +37,13 @@ FIELDS = {
     "operations_complete": "token summary",
     "operations_commit": "batch reviews",
     "finding_record": "id evidence summary impact status verification disclosure no_notice_reason",
-    "review_complete": "job up_to through summary goal_id stop_condition source_check_ids",
+    "review_complete": "job up_to through summary goal_id stop_condition source_check_ids window",
     "run_complete": "outcome summary gaps",
     "delegate": "goal_id goal tasks context output_schema images action subagent_id message",
     "research_start": "items goal_id context",
     "research_status": "id",
     "forget": "kind object_kind id resource signal_id external_status_verified",
-    "followup_update": "kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id",
+    "followup_update": "kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset snapshot_revision disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id",
 }
 CAS = {
     "goal_update": "goal",
@@ -78,11 +78,15 @@ def validate(action, data):
         raise DomainError(
             "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown))
         )
+    if action in {'context', 'status', 'review_complete'} and 'window' in data and not isinstance(data['window'], str):
+        raise DomainError('invalid_argument', 'window must be text')
+    if action in {'context', 'status', 'content_read'} and 'cursor' in data and not isinstance(data['cursor'], str):
+        raise DomainError('invalid_argument', 'cursor must be text')
     for name, value in data.items():
         if name in {"offset", "length", "limit", "batch"} and type(value) is not int:
             raise DomainError("invalid_argument", name + " must be an integer")
         if (
-            name in {"delete", "external_status_verified", "final_result", "read_only"}
+            name in {"delete", "external_status_verified", "final_result", "read_only", "descriptor"}
             and type(value) is not bool
         ):
             raise DomainError("invalid_argument", name + " must be boolean")
@@ -114,7 +118,7 @@ def validate(action, data):
                     "completion_criteria",
                     "query",
                     "topic",
-                    "receipt_id",
+                    "receipt_id", "section", "revision", "snapshot_revision", "part",
                 }
             )
             and value is not None
