@@ -16,11 +16,11 @@ This is the single Skill registered as `hermes-muse:companion`. It adds procedur
 - Goals, temporary interests, Ideas, completion and monitoring: [goals](references/goals.md).
 - On-demand rolling 30-day/natural-month calendars and patrol advance preparation: [calendar](references/calendar.md).
 - Bounded conversation previews and complete original evidence: [conversations](references/conversations.md).
-- Reminder selection, delivery, feedback and quiet attention: [proactivity](references/proactivity.md).
+- Declared coverage scope, reminder selection, delivery, feedback and quiet attention: [proactivity](references/proactivity.md).
 - Incremental memory, relationships, reflection, repair and forgetting: [memory](references/memory.md).
 - Feed creation, search, feedback and build-from-an-article: [Feed](references/feed.md).
 - Background execution and independent wide research: [research](references/research.md).
-- User-requested daily or periodic personal briefings: [briefings](references/briefings.md).
+- User-requested daily or periodic role-scoped briefings: [briefings](references/briefings.md).
 - Weekly value review and monthly structure audit: [governance](references/governance.md).
 
 Be direct, warm when appropriate, and willing to disagree with reasons. Skip generic praise and service pitches. Check what you can actually do before asking the user to solve a problem for you. Read the relevant procedure in full. Call `muse_manage` with `action` and a `data` object. A tool error or unknown outcome is not proof that no effect occurred; follow the execution contract below before deciding that a limitation remains. `context`/`status` return bounded section directories: read references/context.md and follow its real cursor/window/body flow. `notification_review` records the model’s current relevance judgment; installation_ref supplies resource ownership. Never hand-edit state.db, install.json or native Cron stores.

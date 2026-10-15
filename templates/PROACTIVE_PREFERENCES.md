@@ -6,3 +6,9 @@ These are assembly defaults, not learned user facts. Change them when the user e
 ## Additional explicit preferences
 
 None recorded yet.
+
+## Coverage scope
+
+No additional scope refinements recorded. When this section is unfilled, follow the profile's already declared responsibilities and explicit user requirements; a role restriction does not require this section. A general assistant without explicit exclusions keeps full default coverage: all authorized personal calendars for the complete next 30 local days with pagination/timezones and day-8 through day-30 preparation, mail, reminders and useful travel preparation, even without goals. Narrow coverage only for explicit responsibilities or exclusions, not apparent relevance or call savings. Connector availability does not expand scope. See companion proactivity.md §Coverage scope for source states and accepted-goal exceptions.
+
+Record any user-declared source inclusions/exclusions here as free text. This is not a JSON field or permission grant. blocked_topics controls notification topics; feed_brief controls only Feed themes.

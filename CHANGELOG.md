@@ -4,6 +4,7 @@
 - Current conversation descriptors and unchanged-prefix coverage let long evidence reads survive appends without skipping corrections.
 - Page oversized object metadata, return reference receipts for oversized committed mutations, and preserve CAS/idempotent replay.
 - Fix orphan-only followup continuation, bind pages to selection revision; document existing Feed correction and finding absent creation.
+- Align scheduled source coverage with explicit profile duties and optional preference prose; keep the full general-assistant default and all existing execution/delivery safeguards.
 - Keep default Dashboard/profile management, child read boundaries, notification budgets and transport semantics. No deployment implied.
 
 # 0.2.1 — unified local profile Dashboard
