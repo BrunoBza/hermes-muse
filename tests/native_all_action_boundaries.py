@@ -22,7 +22,7 @@ from hermes_muse.contracts import FIELDS
 from hermes_muse.responses import ARCHIVE, archive
 from agent.delegation_context import delegated_child_context
 
-assert set(ACTIONS)==set(FIELDS) and len(ACTIONS)==41
+assert set(ACTIONS)==set(FIELDS) and len(ACTIONS)==40
 cap=256*1024
 def raw_call(action,data,session='origin'):
     raw=handle_function_call('muse_manage',{'action':action,'data':data},session_id=session,turn_id='user-repair',enabled_toolsets=['muse'])
@@ -123,5 +123,5 @@ with delegated_child_context('fixture-child'):
 before=rt.store.read('cursor','feed-pulse',0)
 assert not raw_call('review_complete',{'job':'feed-pulse','up_to':time.time(),'through':time.time(),'summary':'Synthetic','window':'x'*300000})['ok']
 assert rt.store.read('cursor','feed-pulse',0)==before
-print(json.dumps({'actions':list(ACTIONS),'all_41_real_oversized_input_no_changes':True,'all_41_final_success_error_envelopes_bounded':True,'native_errors_readable':True,'delegate_replay_no_duplicate':True,'pending_unknown_never_redispatched':True,'research_status_paged':True,'cross_session_scope_child_denied':True,'synthetic_dispatch_calls':len(calls),'real_delegate_calls':0,'external_sends':0}))
+print(json.dumps({'actions':list(ACTIONS),'all_40_real_oversized_input_no_changes':True,'all_40_final_success_error_envelopes_bounded':True,'native_errors_readable':True,'delegate_replay_no_duplicate':True,'pending_unknown_never_redispatched':True,'research_status_paged':True,'cross_session_scope_child_denied':True,'synthetic_dispatch_calls':len(calls),'real_delegate_calls':0,'external_sends':0}))
 native.close();rt.close()

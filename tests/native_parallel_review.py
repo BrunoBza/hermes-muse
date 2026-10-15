@@ -58,7 +58,7 @@ def run(home):
     children = []
     try:
         invoke_hook('pre_llm_call', session_id='parent', turn_id='user', platform='cli', user_message='Review synthetic task evidence and goal g.')
-        call('goal_create', dict(id='g',title='Synthetic goal',description='Inspect only',completion_criteria='Actual evidence reviewed',signal_id='user',request_id='goal'))
+        call('goal_create', dict(id='g',title='Synthetic goal',description='Inspect only',completion_criteria='Actual evidence reviewed',signal_id='user'))
         native.create_session('parent',source='cli',chat_type='private')
         native.append_message('parent','user','Original synthetic intent: read and compare, no external writes.')
         native.append_message('parent','assistant','History '+ 'h'*26000+'HISTORY-END')

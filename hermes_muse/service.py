@@ -186,8 +186,14 @@ class Companion:
                     if notice.get('goal_id') in closing and notice['status'] in {'candidate', 'pending', 'queued'} and not notice.get('final_result'):
                         notice['status'] = 'cancelled'
                         self.store.put(db, 'notification', notice['id'], notice)
+        failed = []
         for key in closing:
-            self.host.pause_owner(key)
+            try:
+                self.host.pause_owner(key)
+            except Exception:
+                failed.append(key)
+        if failed:
+            return {**record, 'warning': f"Goal committed; watch cleanup failed for {len(failed)} goal(s): {', '.join(failed[:10])}. Inspect owned watches and retry their cleanup; do not repeat goal completion."}
         return record
 
     def interest_record(self, data, *, idea=False):

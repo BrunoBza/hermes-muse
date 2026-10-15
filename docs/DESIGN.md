@@ -188,6 +188,7 @@ Internal pagination scope signatures remain, with no caller scope_token service.
 Notification state remains separate from goal completion, preserving quiet/dedup/transport rules.
 
 Installation performs the one-time migration in migration.py; pure views never do.
+Completed rollback archives are retained under a unique suffix before a subsequent upgrade starts a fresh cycle. A saved after hash skips a goal only when its current bytes match; unrelated edits never get overwritten.
 Original goal files and followup records move to archive/followup-0.2.x. Root statuses
 map directly and progress/owner remain. Offline rollback checks for newer edits before
 restoring original files/rows, without restoring a whole database or rerunning work.

@@ -52,6 +52,12 @@ def run(home):
             db.append_message('parent','assistant','The fixture result is complete and has been explained.')
             done=call('goal_update',{'id':'fixture','status':'done','note':'Result checked and explained in this conversation'})
             assert done['status']=='done' and call('context',{'section':'followups'})['due_total']==0
+            from unittest.mock import patch
+            call('goal_create',{'id':'cleanup','title':'Cleanup fixture','description':'Synthetic','completion_criteria':'Explain result'})
+            with patch.object(runtime.host,'pause_owner',side_effect=OSError('Synthetic cleanup failure')):
+                committed=call('goal_update',{'id':'cleanup','status':'done','note':'Result explained','expected_revision':1})
+            assert committed['status']=='done' and 'watch cleanup failed' in committed['warning']
+            assert runtime.store.goal('cleanup')[0]['revision']==2
             with delegated_child_context('child'):
                 assert call('goal_update',{'id':'fixture','note':'Unauthorized'},False)['code']=='permission_denied'
                 assert call('content_write',{'kind':'tools_note','id':'current','body':'Unauthorized','expected_revision':'absent','request_id':'child'},False)['code']=='permission_denied'

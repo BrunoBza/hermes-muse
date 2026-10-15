@@ -73,7 +73,6 @@ with tempfile.TemporaryDirectory(prefix="muse-docker-") as directory:
                         "description": "Synthetic " + label,
                         "completion_criteria": "Verified artifact",
                         "signal_id": "signal",
-                        "request_id": "create",
                     },
                 }
             )

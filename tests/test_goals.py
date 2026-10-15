@@ -41,6 +41,16 @@ class GoalTests(unittest.TestCase):
         result=self.service.goal_update({'id':'g','expected_revision':current['revision'],'status':'done','note':'Done and explained'})
         self.assertEqual(result['revision'],current['revision']+1)
 
+    def test_committed_goal_returns_warning_when_watch_cleanup_fails(self):
+        self.goal()
+        with patch.object(self.service.host,'pause_owner',side_effect=OSError('Synthetic Cron failure')):
+            result=self.service.goal_update({'id':'g','status':'done','note':'Result explained','expected_revision':1})
+        self.assertEqual(result['status'],'done');self.assertEqual(result['revision'],2)
+        self.assertIn('Goal committed; watch cleanup failed',result['warning'])
+        self.assertIn('do not repeat goal completion',result['warning'])
+        stored=self.store.goal('g')[0]
+        self.assertEqual(stored['status'],'done');self.assertNotIn('warning',stored)
+
     def test_concurrent_goal_revision_has_one_winner(self):
         from concurrent.futures import ThreadPoolExecutor
         self.goal()
@@ -140,6 +150,44 @@ class GoalTests(unittest.TestCase):
         migrate(self.store);self.assertEqual(self.store.goal('g')[0]['status'],'done')
         self.service.goal_update({'id':'g','note':'New activity'})
         with self.assertRaises(ValueError):rollback(self.store)
+
+    def test_sixty_goals_migrate_rollback_upgrade_and_new_downgraded_work(self):
+        originals={f'g{i:02}':self.legacy(f'g{i:02}', 'active' if i<26 else 'completed' if i<52 else 'cancelled') for i in range(60)}
+        receipt={'id':'receipt','terminal':False};self.store.write('followup_receipt','receipt',receipt)
+        migrate(self.store);rollback(self.store)
+        self.assertTrue(json.loads(self.store.path(ARCHIVE+'/manifest.json').read_text())['rolled_back_at'])
+        self.assertTrue(all(self.store.path(f'workspace/goals/{k}/GOAL.md').read_bytes()==raw for k,raw in originals.items()))
+        # A downgraded version can save new progress and new receipts before upgrading again.
+        goal,body=self.store.goal('g00');goal['progress'].append({'at':self.now,'text':'New downgraded work'})
+        self.store.save_goal(goal,body);latest=self.store.path('workspace/goals/g00/GOAL.md').read_bytes()
+        self.store.write('followup_receipt','new',{'id':'new'})
+        second=migrate(self.store)
+        self.assertEqual(second['goals'],60);self.assertEqual(second['archived_records'],2)
+        self.assertTrue(all(type(g['revision']) is int and 'followup' not in g for g in self.store.goals()))
+        self.assertEqual({s:sum(g['status']==s for g in self.store.goals()) for s in ('active','done','cancelled')},{'active':26,'done':26,'cancelled':8})
+        self.assertEqual(snapshot(self.home,now=self.now)['due_total'],26)
+        closed=list(self.store.path('archive').glob('followup-0.2.x-*'));self.assertEqual(len(closed),1)
+        self.assertEqual((closed[0]/'goals/g00.md').read_bytes(),originals['g00'])
+        rollback(self.store)
+        self.assertEqual(self.store.path('workspace/goals/g00/GOAL.md').read_bytes(),latest)
+        self.assertEqual(self.store.read('followup_receipt','receipt'),receipt)
+        self.assertEqual(self.store.read('followup_receipt','new'),{'id':'new'})
+        migrate(self.store)
+        updated=self.service.goal_update({'id':'g00','status':'done','expected_revision':1,'note':'Result checked and explained'})
+        self.assertEqual(updated['revision'],2);self.assertEqual(updated['progress'][1]['text'],'New downgraded work')
+
+    def test_unmarked_prior_rollback_reconverts_before_and_refuses_unexpected_file(self):
+        raw=self.legacy('g','completed');migrate(self.store)
+        # Simulate a rollback produced by 722a82f, which retained the after manifest.
+        self.store.path('workspace/goals/g/GOAL.md').write_bytes(raw)
+        with self.store.transaction() as db:self.store.delete(db,'meta','goal_schema')
+        migrate(self.store)
+        self.assertEqual(self.store.goal('g')[0]['status'],'done')
+        self.assertEqual(self.store.goal('g')[0]['revision'],1)
+        with self.store.transaction() as db:self.store.delete(db,'meta','goal_schema')
+        changed=raw+b'Unexpected concurrent edit\n';self.store.path('workspace/goals/g/GOAL.md').write_bytes(changed)
+        with self.assertRaises(ValueError):migrate(self.store)
+        self.assertEqual(self.store.path('workspace/goals/g/GOAL.md').read_bytes(),changed)
 
     def test_pure_views_never_initialize_or_migrate(self):
         missing=self.home/'missing'

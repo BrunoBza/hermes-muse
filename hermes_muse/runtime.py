@@ -316,7 +316,7 @@ class Runtime:
                 bounded = {'id': key, 'result_is_reference': True,
                     'content_ref': {'action': 'content_read', 'data': {'kind': kind, 'id': key}},
                     'instruction': 'State committed. Read its paginated content_ref. If this action accepts request_id, replay only the original key/arguments; do not repeat a committed change.'}
-                for field in ('changed', 'reviewed', 'partial', 'requires_host_action', 'final_response'):
+                for field in ('changed', 'reviewed', 'partial', 'requires_host_action', 'final_response', 'warning'):
                     if isinstance(result, dict) and field in result:
                         bounded[field] = result[field]
                 return Runtime._receipt({**envelope, "result": bounded})

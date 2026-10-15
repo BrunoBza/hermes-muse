@@ -5,6 +5,7 @@ interest; an Idea stays a suggestion until accepted. Preserve the user's criteri
 
 - goal_create: id?, title, description, completion_criteria, signal_id?, parent_id?, deadline?, external_ref?, owner?. One subgoal level; timezone-aware deadlines.
 - goal_update: id, status?, note?, progress?, owner?, next_check_at?, waiting_user?, blocked?, description?, completion_criteria?, research_review_at?, expected_revision?. Status is active/done/cancelled. Explain a checked result, then record done with a note. Cancellation stops owned watches; it does not stop an external agent by implication.
+- A watch-cleanup warning means the goal was committed. Inspect its owned watches and finish cleanup; do not repeat completion as though the goal write failed.
 - interest_record: id?, title, signal_id, expires?, rationale?. Default14 days from the actual mention. Only a newer user mention renews it.
 - idea_add: goal_id?, title, rationale, sources?, expires?. Ideas are not execution authority.
 - feedback: kind, id, action, signal_id, until?. Distinguish accept/done/dismiss/stop/snooze.

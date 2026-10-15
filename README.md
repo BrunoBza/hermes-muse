@@ -314,4 +314,5 @@ Installation archives old goal files and followup records under
 active→active, retaining progress and owner. Pure views never initialize or migrate.
 For offline rehearsal/rollback use `python -m hermes_muse.migration --home <home>`
 (or `--rollback`). Back up first and stop writers; rollback refuses new goal edits.
+A completed rollback retains its archive; the next upgrade starts a fresh archive and preserves the prior cycle under `followup-0.2.x-<id>`.
 No data is erased and no unknown external effect is resent. Windows remains unsupported.

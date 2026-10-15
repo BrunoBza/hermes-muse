@@ -1,6 +1,8 @@
 """One-time 0.2.x goal migration, with a file archive and guarded offline rollback."""
 import json
+import os
 import time
+import uuid
 from pathlib import Path
 
 from .content_io import Files, revision
@@ -16,6 +18,17 @@ def migrate(store):
         if store.read('meta', 'goal_schema') == 3:
             return {'migrated': False}
         files = Files(store.home)
+        manifest_path = ARCHIVE + '/manifest.json'
+        try:
+            previous = json.loads(files.read(manifest_path))
+        except FileNotFoundError:
+            previous = {}
+        if previous.get('rolled_back_at'):
+            # Keep the completed cycle intact; a downgraded install may have new work.
+            with files.directory('archive') as parent:
+                os.rename('followup-0.2.x', 'followup-0.2.x-' + uuid.uuid4().hex,
+                          src_dir_fd=parent, dst_dir_fd=parent)
+                os.fsync(parent)
         records_path = ARCHIVE + '/records.json'
         try:
             records = json.loads(files.read(records_path))
@@ -25,7 +38,6 @@ def migrate(store):
                            for kind, key, raw in db.execute('SELECT kind,id,data FROM records')
                            if kind.startswith(REMOVED) or kind in {'mutation_request', 'tool_result'} and json.loads(raw).get('action') in {'followup_update', 'goal_create', 'goal_update'}]
             store.write_text(records_path, json.dumps(records, ensure_ascii=False), create_only=True)
-        manifest_path = ARCHIVE + '/manifest.json'
         try:
             manifest = json.loads(files.read(manifest_path))
         except FileNotFoundError:
@@ -44,7 +56,8 @@ def migrate(store):
             text = raw.decode().replace('\r\n', '\n').replace('\r', '\n')
             first, _, body = text.partition('\n')
             original = json.loads(first[17:-4])
-            if 'after' in manifest['goals'][key]:
+            current = files.read(relative)
+            if revision(current) == manifest['goals'][key].get('after'):
                 continue
             goal = dict(original)
             old = goal.pop('followup', {})
@@ -58,7 +71,6 @@ def migrate(store):
             for field in ('outcome_refs', 'outcome_evidence', '_request_id'):
                 goal.pop(field, None)
             transformed = ('<!-- hermes-muse ' + json.dumps(goal, ensure_ascii=False, allow_nan=False) + ' -->\n' + body).encode()
-            current = files.read(relative)
             if revision(current) not in {manifest['goals'][key]['before'], revision(transformed)}:
                 raise ValueError('Goal changed during migration; preserve archive and merge explicitly')
             files.replace(relative, transformed, revision(current))
@@ -98,6 +110,8 @@ def rollback(store):
             for row in records:
                 store.put(db, row['kind'], row['id'], row['data'])
             store.delete(db, 'meta', 'goal_schema')
+        manifest['rolled_back_at'] = time.time()
+        store.write_text(ARCHIVE + '/manifest.json', json.dumps(manifest, ensure_ascii=False))
         return {'restored_goals': len(manifest['goals']), 'restored_records': len(records)}
 
 

@@ -16,14 +16,14 @@ class ResponseBoundaryTests(unittest.TestCase):
             ('preferences', {'blocked_topics': ['x'*300000]}, {}, 'preferences', 'current'),
             ('installation_prepare', {'pending_evidence': ['x'*300000], 'partial': True, 'requires_host_action': True}, {}, 'installation', 'current'),
             ('run_complete', {'id': 'r', 'gaps': ['x'*300000]}, {}, 'run', 'r'),
-            ('goal_update', {'id':'g','progress': ['x'*300000]}, {'id': 'g'}, 'goal', 'g'),
+            ('goal_update', {'id':'g','progress': ['x'*300000], 'warning':'Goal committed; watch cleanup failed'}, {'id': 'g'}, 'goal', 'g'),
             ('notification_prepare', {'id': 'n', 'sources': ['x'*300000], 'final_response': 'Approved previous notice'}, {}, 'notice', 'n'),
         ):
             with self.subTest(action=action):
                 reply = json.loads(Runtime._response(result, action=action, data=data))
                 self.assertTrue(reply['ok'])
                 self.assertEqual(reply['result']['content_ref']['data'], {'kind': kind, 'id': key})
-                for field in ('partial', 'requires_host_action', 'final_response'):
+                for field in ('partial', 'requires_host_action', 'final_response', 'warning'):
                     if field in result:
                         self.assertEqual(reply['result'][field], result[field])
 
