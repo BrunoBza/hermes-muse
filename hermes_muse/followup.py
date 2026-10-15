@@ -30,6 +30,33 @@ INSTRUCTION = (
 )
 
 
+def newer_input(goal, fu, read, *, turns=None, session_id="", turn_id=""):
+    """Shared write gate / read-only diagnostic; unknown relevance still blocks."""
+    latest = read('session', goal.get('session_id')) or {}
+    source = read('signal', fu['source_signal']) or {}
+    if (latest.get('active') and session_id == goal.get('session_id')
+            and turn_id == fu['source_signal'] == latest.get('turn_id')):
+        return None  # The current real turn is this newly accepted goal's authority.
+    if turns is None:
+        turns = [read(TURN_KIND, digest(str(goal.get('session_id')) + ':' + str(latest.get('turn_id')))) or {}]
+    for turn in sorted(turns, key=lambda t: t.get('created', 0), reverse=True):
+        if not (turn.get('session_id') == goal.get('session_id')
+                and turn.get('disposition') in {'pending', 'needs_clarification'}
+                and turn.get('signal_id') != fu['source_signal']
+                and turn.get('created', 0) >= fu.get('source_created_at', source.get('created', goal['created']))):
+            continue
+        review = turn.get('unrelated_goals', {}).get(goal['id'])
+        if (turn.get('ended') and not turn.get('failed') and not turn.get('interrupted') and review
+                and review == {'scope_revision': fu['scope_revision'], 'user_hash': turn.get('user_hash'),
+                               'assistant_hash': turn.get('assistant_hash')}):
+            continue
+        if (latest.get('active') and session_id == goal.get('session_id') and turn_id
+                and turn_id == latest.get('turn_id') and turn_id == turn.get('signal_id')):
+            continue
+        return {'candidate_id': turn['id'], 'expected_revision': turn['revision'], 'goal_id': goal['id']}
+    return None
+
+
 def initial(now, signal, source_created_at=None):
     return {"version": 1, "revision": 1, "scope_revision": 1, "execution_state": "planned",
             "result_state": "unverified", "delivery_state": "open", "next_check_at": now,
@@ -281,13 +308,7 @@ class Followups:
     def _gate(self, db, goal, fu, *, session_id="", turn_id="", allow_terminal=False, allow_inflight=False):
         if goal["status"] == "cancelled" or (goal["status"] != "active" and not allow_terminal):
             raise ValueError("Goal scope is closed")
-        latest = Store.get(db, "session", goal.get("session_id"), {})
-        turn = Store.get(db, TURN_KIND, digest(str(goal.get("session_id")) + ":" + str(latest.get("turn_id"))), {})
-        source = Store.get(db, "signal", fu["source_signal"], {})
-        if (turn.get("disposition") in {"pending", "needs_clarification"} and turn.get("signal_id") != fu["source_signal"]
-                and turn.get("created", 0) >= fu.get("source_created_at", source.get("created", goal["created"]))
-                and not (latest.get("active") and session_id == goal.get("session_id")
-                         and turn_id and turn_id == latest.get("turn_id"))):
+        if newer_input(goal, fu, lambda kind, key: Store.get(db, kind, key), turns=Store.rows(db, TURN_KIND), session_id=session_id, turn_id=turn_id):
             raise ValueError("Review newer user input before background followup")
         if fu["execution_state"] in {"paused", "needs_user", "cancelled"} and not allow_terminal:
             raise ValueError("Followup requires user action or is paused")
@@ -491,6 +512,8 @@ class Followups:
                     if relevant:
                         from .delivery import basis
                         new_basis = basis(fu, "reply", reply["id"], "recorded_unconfirmed", self.service.clock())
+                        from .delivery import handoff_review
+                        Store.put(db, "followup_handoff", goal["id"], handoff_review(goal, reply, self.service.clock()))
                         if all((fu.get("delivery_basis") or {}).get(k) == v for k,v in new_basis.items() if k != "noted_at"):
                             return fu
                         fu["delivery_basis"] = new_basis
@@ -532,8 +555,27 @@ class Followups:
             if not row or data.get("expected_revision") != row["revision"]:
                 raise ValueError("Candidate revision changed")
             disposition = data.get("disposition")
-            if disposition not in {"no_commitment", "already_fulfilled", "link_existing", "needs_clarification"}:
+            if disposition not in {"no_commitment", "already_fulfilled", "link_existing", "needs_clarification", "unrelated"}:
                 raise ValueError("Review needs a semantic disposition")
+            if disposition == "unrelated":
+                signal = Store.get(db, 'signal', row['signal_id'], {})
+                from .followup_recovery import exact_reply
+                reply, _ = exact_reply(self.store.home, {'session_id': row['session_id'],
+                    'assistant_hash': row.get('assistant_hash'), 'message_id': row.get('assistant_message_id')}, since=row['created'])
+                if (not row.get('ended') or row.get('failed') or row.get('interrupted') or not reply
+                        or signal.get('truncated') or signal.get('session_id') != row['session_id']
+                        or digest(signal.get('text', '')) != row['user_hash']):
+                    raise ValueError('Unrelated review needs unchanged original input and a settled native final reply')
+                ids = data.get('goal_ids')
+                if not isinstance(ids, list) or not 1 <= len(ids) <= 20:
+                    raise ValueError('Review 1..20 explicit goals; no blanket scope clearance')
+                for key in ids:
+                    goal, _ = self.store.goal(identifier(key))
+                    fu = goal.get('followup') or {}
+                    if goal.get('session_id') != row['session_id'] or not fu or goal['status'] == 'cancelled':
+                        raise ValueError('Review only existing goals in this original session')
+                    row.setdefault('unrelated_goals', {})[goal['id']] = {'scope_revision': fu['scope_revision'],
+                        'user_hash': row['user_hash'], 'assistant_hash': row['assistant_hash']}
             if disposition == "link_existing":
                 signal = self.service.require_signal(db, row["signal_id"])
                 if signal.get("truncated"):
@@ -548,7 +590,7 @@ class Followups:
                     if goal["status"] != "active" or goal["source_signal"] != row["signal_id"] or goal["session_id"] != row["session_id"]:
                         raise ValueError("Goal does not belong to this accepted source")
                 row["goal_ids"] = ids
-            row.update(disposition=disposition, reason=bounded(data.get("reason"), 2000),
+            row.update(disposition=row["disposition"] if disposition == "unrelated" else disposition, reason=bounded(data.get("reason"), 2000),
                        revision=row["revision"] + 1)
             # This result has no public content object; reject before committing.
             if len(json.dumps({"ok": True, "result": row}, ensure_ascii=False).encode()) > 256 * 1024:

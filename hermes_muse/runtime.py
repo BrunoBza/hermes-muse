@@ -146,8 +146,9 @@ class Runtime:
                     'sections': {kind: {'action':'content_read','data':{'kind':kind,'limit':25}} for kind in COLLECTIONS}})
             if action == "followup_update" and data.get("kind") == "reconcile":
                 from .followup_recovery import diagnose, apply
-                result = (diagnose(self.home, data, self.service.clock()) if data.get("mode", "dry_run") == "dry_run"
-                          else apply(self.service.followups, data, self.service.clock()))
+                origin = {k: kwargs.get(k, "") for k in ("session_id", "turn_id")}
+                result = (diagnose(self.home, data, self.service.clock(), **origin) if data.get("mode", "dry_run") == "dry_run"
+                          else apply(self.service.followups, data, self.service.clock(), **origin))
                 return self._response(result)
             if action == "operations_evidence":
                 return self._response(self.service.operations.evidence(data))

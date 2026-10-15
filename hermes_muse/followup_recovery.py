@@ -24,30 +24,34 @@ def native_terminal(home, receipt):
         return None
     native = None
     path = home / 'state.db'
-    if path.is_file() and not path.is_symlink():
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        return None
+    if path.exists():
         try:
             with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
                 db.execute('PRAGMA query_only=ON')
                 row = db.execute('SELECT origin_session_id,state,result_json FROM async_delegations WHERE delegation_id=?', (key,)).fetchone()
             if row:
-                if row[0] and row[0] != receipt['session_id']:
+                if (row[0] and row[0] != receipt['session_id']) or row[1] not in TERMINAL:
                     return None
-                native = {'state': row[1], 'result': json.loads(row[2] or '{}'), 'delegation_id': key}
-        except (sqlite3.Error, ValueError):
-            pass
-    if native is not None:
-        if not isinstance(native['result'], dict):
+                # Existing but corrupt evidence is NOT absence. Never fall back on it.
+                result = json.loads(row[2])
+                if not isinstance(result, dict):
+                    return None
+                native = {'state': row[1], 'result': result, 'delegation_id': key}
+        except (sqlite3.Error, ValueError, TypeError):
             return None
+    durable_state = None
+    if native is not None:
         from .followup import protocol_outcomes, native_pending, native_failed
         states = [str(x.get('state', x.get('status', ''))).lower() for x in protocol_outcomes(native)]
-        if states[0] not in TERMINAL or native_pending(native) or 'unknown' in states:
+        if native_pending(native) or 'unknown' in states:
             return None
-        state = 'interrupted' if 'interrupted' in states else 'failed' if native_failed(native) else states[0]
-        return {'native_status': state, 'terminal': True, 'failed': state != 'completed', 'terminal_evidence': 'native_durable'}
-    # The native aggregate manifest is written by the host after all children settle.
-    # Reuse descriptor-relative no-follow reads, never paths supplied by the model/manifest.
+        durable_state = ('interrupted' if 'interrupted' in states else 'cancelled' if states[0] == 'cancelled'
+                         else 'failed' if native_failed(native) else states[0])
     files = Files(home)
     files.root = home / 'cache/delegation/live'
+    manifest_state = None
     try:
         raw = files.read(key + '/manifest.json')
         if len(raw) > 262144:
@@ -65,10 +69,19 @@ def native_terminal(home, receipt):
         states = [t.get('status') for t in tasks]
         if any(s not in TERMINAL for s in states):
             return None
-        state = 'interrupted' if 'interrupted' in states else 'completed' if all(s == 'completed' for s in states) else 'failed'
-        return {'native_status': state, 'terminal': True, 'failed': state != 'completed', 'terminal_evidence': 'native_manifest'}
+        manifest_state = ('interrupted' if 'interrupted' in states else 'completed' if all(s == 'completed' for s in states)
+                          else 'cancelled' if all(s == 'cancelled' for s in states) else 'failed')
+    except FileNotFoundError:
+        pass  # Only genuine absence permits the other native source to stand alone.
     except (OSError, ValueError, TypeError):
         return None
+    if durable_state and manifest_state and durable_state != manifest_state:
+        return None
+    state = durable_state or manifest_state
+    if state is None:
+        return None
+    return {'native_status': state, 'terminal': True, 'failed': state != 'completed',
+            'terminal_evidence': 'native_durable' if durable_state else 'native_manifest'}
 
 
 def exact_reply(home, reply, history=None, *, since=0):
@@ -115,15 +128,17 @@ def answered_question(view, row):
     text = signal.get('text', '').strip()
     if signal.get('truncated') or digest(text) != row.get('user_hash'):
         return False
-    if not re.match(r"(?i)^(what(?:'s| is) (?:the |its |current )?(?:status|time|version)|how (?:is|are) .*|.*(?:状态如何|怎么样了|什么版本|几点了))[?？。!！ ]*$", text):
+    if not re.fullmatch(r"(?i)(what(?:'s| is) (?:the |its |current )?(?:status|time|version)|how (?:is|are) [^?？.!。！\n]{1,100}|[^?？.!。！\n]{0,100}(?:状态如何|怎么样了|什么版本|几点了))[?？。!！ ]*", text):
         return False
-    if any(r.get('turn_id') == row['signal_id'] for r in view.rows('followup_receipt')):
+    if re.search(r'(?i)(cancel|stop|pause|hold|change|delete|please|取消|停止|暂停|不要|不再|改为|删除|帮我|请)', text):
+        return False
+    if any(r.get('turn_id') == row['signal_id'] and r.get('session_id') == row['session_id'] for r in view.rows('followup_receipt')):
         return False
     reply, history = exact_reply(view.home, {'session_id': row['session_id'], 'assistant_hash': row.get('assistant_hash'), 'message_id': row.get('assistant_message_id')}, since=signal['created'])
     if not reply or history['messages'][0].get('at', 0) < signal['created']:
         return False
     answer = next(m['text'] for m in history['messages'] if m['id'] == reply['message_id'])
-    if re.search(r"(?i)(\?|？|\bwill\b|\bshall\b|\blater\b|我会|稍后|将会|待确认)", answer):
+    if re.search(r"(?i)(\bwill\b|\bshall\b|\blater\b|我会|稍后|将会|待确认)", answer):
         return False
     return True
 
@@ -136,7 +151,15 @@ def objects(view):
     return sorted(rows, key=lambda x: x[0] + ':' + x[1])
 
 
-def proposed(view, kind, row, now):
+def recovery_blocker(view, goal, *, session_id="", turn_id=""):
+    fu = goal.get('followup')
+    if not fu:
+        return None
+    from .followup import newer_input
+    return newer_input(goal, fu, view.record, turns=view.rows('followup_turn'), session_id=session_id, turn_id=turn_id)
+
+
+def proposed(view, kind, row, now, **origin):
     after = copy.deepcopy(row)
     if kind == 'followup_receipt':
         if row.get('terminal') and row.get('native_status') in TERMINAL:
@@ -160,24 +183,23 @@ def proposed(view, kind, row, now):
         if (row.get('status') == 'cancelled' or fu.get('result_state') != 'verified'
                 or fu.get('delivery_state') in {'confirmed', 'suppressed'}):
             return None
-        from .delivery import reply_evidence, basis, valid_basis
+        from .delivery import basis, valid_basis
         replies = view.rows('followup_reply')
         if valid_basis(fu, {'followup_reply': replies, 'notification': view.rows('notification')}):
             return None
-        for r in sorted(replies, key=lambda r: r['observed_at'], reverse=True):
-            since = max(fu.get('source_created_at', row['created']), fu.get('verification', {}).get('verified_at', 0))
-            if r.get('session_id') != row.get('session_id') or r.get('observed_at', 0) < since:
-                continue
-            reply, history = exact_reply(view.home, r, since=since)
-            if (reply and history['messages'][0].get('at', 0) >= max(fu.get('source_created_at', row['created']), fu.get('verification', {}).get('verified_at', 0))
-                    and reply_evidence(row, reply, history)[1]):
-                after['followup'].update(delivery_basis=basis(fu, 'reply', r['id'], 'recorded_unconfirmed', now),
-                    reply_id=r['id'], delivery_state='unknown', blocker_class='delivery_unknown', revision=fu['revision'] + 1)
-                break
+        from .delivery import reviewed_reply
+        review = view.record('followup_handoff', row['id'])
+        if review:
+            r = next((r for r in replies if r['id'] == review.get('reply_id')), None)
+            if r:
+                reply, history = exact_reply(view.home, r, since=fu.get('source_created_at', row['created']))
+                if reply and reviewed_reply(row, reply, history, review):
+                    after['followup'].update(delivery_basis=basis(fu, 'reply', r['id'], 'recorded_unconfirmed', now),
+                        reply_id=r['id'], delivery_state='unknown', blocker_class='delivery_unknown', revision=fu['revision'] + 1)
     return after if after != row else None
 
 
-def diagnose(home, data, now):
+def diagnose(home, data, now, **origin):
     view = Views(home)
     view.check_scope(data.get('scope_token'))
     all_rows = objects(view)
@@ -188,17 +210,18 @@ def diagnose(home, data, now):
     selected = [r for r in all_rows if r[0] + ':' + r[1] > cursor][:10]
     items = []
     for kind, key, row in selected:
-        after = proposed(view, kind, row, now)
+        after = proposed(view, kind, row, now, **origin)
+        blocker = recovery_blocker(view, row, **origin) if kind == 'goal' and after else None
         items.append({'object_kind': kind, 'id': key, 'expected_revision': revision(canonical(row)),
                       'repair_ids': [r['id'] for r in repairs if r['kind'] == kind and r['key'] == key][-5:],
-                      'change': after is not None, 'reason': 'native_evidence' if after else 'unchanged_or_unproven'})
+                      'change': after is not None and not blocker, 'blocked_by': blocker, 'reason': 'newer_input_review_required' if blocker else 'native_evidence' if after else 'unchanged_or_unproven'})
     return {'scope_token': view.scope(), 'items': items,
             'next_cursor': selected[-1][0] + ':' + selected[-1][1] if len(selected) == 10 else None,
             'pagination': 'Lexical object keys; new earlier IDs require a fresh pass. Apply rechecks each current object and native evidence; no snapshot claims.',
             'mode': 'dry_run'}
 
 
-def apply(followups, data, now):
+def apply(followups, data, now, **origin):
     """One object, original evidence, CAS, durable preimage and guarded rollback."""
     store = followups.store
     view = Views(store.home)
@@ -229,13 +252,16 @@ def apply(followups, data, now):
                 raise DomainError('revision_conflict', 'Post-repair state changed; rollback cannot overwrite it')
             after = backup['before']
         else:
-            after = proposed(view, kind, row, now)
+            after = proposed(view, kind, row, now, **origin)
+            blocker = recovery_blocker(view, row, **origin) if kind == 'goal' and after else None
+            if blocker:
+                raise DomainError('permission_denied', 'Review newer user input before background followup', continuation=blocker)
         if after is None or after == row:
             return {'changed': False, 'revision': current}
         if kind == 'goal':
             if not backup:
                 with store.transaction() as db:
-                    followups._gate(db, row, row['followup'], allow_terminal=True)
+                    followups._gate(db, row, row['followup'], allow_terminal=True, **origin)
             after = copy.deepcopy(after)
             after.pop('_request_id', None)
         repair_id = digest(canonical([kind, key, row, after]).decode())
@@ -260,6 +286,9 @@ def automatic(followups, session_id, now, owner_id=None):
             and (not owner_id or (r[2].get('owner') or {}).get('id') == owner_id)]
     rows = [r for r in rows if not (r[0] == 'followup_receipt' and r[2].get('terminal') and r[2].get('native_status') in TERMINAL)
             and not (r[0] == 'followup_turn' and r[2].get('disposition') not in {'pending', 'needs_clarification'})]
+    if session_id is not None and not owner_id:
+        # Settle completed inquiries before evaluating the older goal's input gate.
+        rows.sort(key=lambda r: (r[0] != 'followup_turn', -r[2].get('created', 0)))
     cursor = getattr(followups, '_recovery_after', '') if session_id is None else ''
     selected = [r for r in rows if r[0] + ':' + r[1] > cursor][:25]
     if not selected:

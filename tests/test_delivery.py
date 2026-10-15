@@ -143,10 +143,7 @@ class DeliveryTests(unittest.TestCase):
         text = goal["followup"]["verification"]["summary"]
         self.store.write("followup_reply", "reply", dict(id="reply", session_id="origin",
                          observed_at=self.now, message_id=42, assistant_hash=digest(text)))
-        history = {"messages": [dict(id=42, role="assistant", text=text)]}
-        with patch("hermes_muse.conversation.read_conversation", return_value=history):
-            for n in range(10):
-                self.assertEqual(snapshot(self.home, now=self.now + n * 1800)["due_total"], 0)
+        # A legacy reply_id/summary match is not an explicit reviewed handoff receipt.
+        for n in range(10):
+            self.assertEqual(snapshot(self.home, now=self.now + n * 1800)["due_total"], 1)
         self.assertIsNone(self.fu().get("delivery_basis"))
-        with patch("hermes_muse.conversation.read_conversation", return_value={"messages": []}):
-            self.assertEqual(snapshot(self.home, now=self.now)["due_total"], 1)

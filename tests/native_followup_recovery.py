@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import time
 import uuid
@@ -52,6 +53,17 @@ for status in ('completed','interrupted','failed','missing'):
         row=next(r for r in rt.store.all('followup_receipt') if r['owner']['id']==key)
         assert row['terminal'] and row['native_status']==status,row
 assert f.snapshot(home)['orphan_total']==1
+# Corrupt durable rows must never use a completed fallback manifest.
+for state in ('running','interrupted','failed'):
+    key='deleg_corrupt_'+state
+    invoke_hook('post_tool_call',tool_name='delegate_task',args={'goal':'Fixture'},result=json.dumps({'status':'dispatched','delegation_id':key}),session_id='origin',turn_id='u',tool_call_id=key)
+    create_live_transcripts([{'goal':'Fixture'}],delegation_id=key,home=home)
+    update_manifest_statuses(key,[{'task_index':0,'status':'completed'}],home=home)
+    _persist_dispatch({'delegation_id':key,'origin_session_id':'origin','dispatched_at':time.time()})
+    with sqlite3.connect(home/'state.db') as db:
+        db.execute('UPDATE async_delegations SET state=?,result_json=? WHERE delegation_id=?',(state,'{broken',key))
+    invoke_hook('pre_llm_call',session_id='origin',turn_id='callback-'+key,platform='cron',user_message='[ASYNC DELEGATION BATCH COMPLETE — '+key+']')
+    assert not next(r for r in rt.store.all('followup_receipt') if r['owner']['id']==key)['terminal']
 # Duplicate legacy receipt is repaired via supported action, with replay/rollback.
 row=next(r for r in rt.store.all('followup_receipt') if r['owner']['id']=='deleg_completed')
 row.update(id='legacy-copy',terminal=False,native_status='dispatched');rt.store.write('followup_receipt',row['id'],row)
@@ -75,16 +87,73 @@ invoke_hook('post_llm_call',session_id='origin',turn_id='question',assistant_res
 invoke_hook('on_session_end',session_id='origin',turn_id='question',completed=True,failed=False,interrupted=False)
 assert next(r for r in rt.store.all('followup_turn') if r['signal_id']=='question')['disposition']=='no_commitment'
 assert rt.store.goals()==[]
-# Existing accepted+verified result; finish hook forms handoff without send/confirmed.
+# An unreviewed final reply, including a negative summary mention, cannot form handoff.
 rt.service.signal('accepted','origin','Research the fixture')
 rt.service.goal_create({'id':'fixture','signal_id':'accepted','title':'Fixture','description':'Research','completion_criteria':'Verified artifact'})
 g,b=rt.store.goal('fixture');g['followup'].update(execution_state='finished',result_state='verified',verification={'verified_at':time.time()-10,'summary':'Verified fixture artifact'})
 rt.store.save_goal(g,b)
-native.append_message('origin','assistant','Verified fixture artifact')
-invoke_hook('post_llm_call',session_id='origin',turn_id='accepted',assistant_response='Verified fixture artifact',conversation_history=[])
-invoke_hook('on_session_end',session_id='origin',turn_id='accepted',completed=True,failed=False,interrupted=False)
-fu=rt.store.goal('fixture')[0]['followup'];assert fu['delivery_state']=='unknown' and fu['delivery_basis']['kind']=='reply',fu
+negative='Verified fixture artifact is not ready. I have not delivered the result; it remains blocked.'
+for answer in (negative,'Only mentioning files/result.md from an earlier phase.','Verified fixture artifact'):
+    native.append_message('origin','assistant',answer)
+    invoke_hook('post_llm_call',session_id='origin',turn_id='accepted',assistant_response=answer,conversation_history=[])
+    invoke_hook('on_session_end',session_id='origin',turn_id='accepted',completed=True,failed=False,interrupted=False)
+    assert not rt.store.goal('fixture')[0]['followup'].get('delivery_basis')
+    assert f.snapshot(home)['due_total']==1
+    if answer == negative:
+        call({'kind':'handoff','goal_id':'fixture','expected_revision':rt.store.goal('fixture')[0]['followup']['revision'],
+              'reply_id':f.digest('origin:accepted'),'reason':'Incorrect assertion','request_id':'negative-handoff'},False)
+        assert rt.store.read('followup_handoff','fixture') is None
+# Explicit parent semantic handoff creates a scoped review receipt.
+fu=rt.store.goal('fixture')[0]['followup']
+call({'kind':'handoff','goal_id':'fixture','expected_revision':fu['revision'],
+      'reply_id':f.digest('origin:accepted'),'reason':'Original final result reviewed and handed off','request_id':'review-handoff'})
+assert rt.store.read('followup_handoff','fixture')['message_id']
+
+def reset_projection():
+    g,b=rt.store.goal('fixture')
+    g['followup'].update(delivery_basis=None,reply_id=None,delivery_state='open',blocker_class=None,next_check_at=time.time()-1)
+    rt.store.save_goal(g,b)
+
+def turn(key,text,answer):
+    native.append_message('origin','user',text)
+    invoke_hook('pre_llm_call',session_id='origin',turn_id=key,platform='cli',user_message=text)
+    native.append_message('origin','assistant',answer)
+    invoke_hook('post_llm_call',session_id='origin',turn_id=key,assistant_response=answer,conversation_history=[])
+    invoke_hook('on_session_end',session_id='origin',turn_id=key,completed=True,failed=False,interrupted=False)
+
+reset_projection()
+turn('inquiry','How is the other service?','It is healthy. Would you like details?')
+assert rt.store.read('followup_turn',f.digest('origin:inquiry'))['disposition']=='no_commitment'
+fu=rt.store.goal('fixture')[0]['followup'];assert fu['delivery_state']=='unknown' and fu['delivery_basis']['kind']=='reply'
+reset_projection()
+turn('cancel','What is the status? Cancel fixture.','The cancellation needs to be processed.')
+plan=call({'kind':'reconcile'})
+# Lexical continuation may be needed after the extra corruption fixtures.
+while not any(x['id']=='fixture' and x['object_kind']=='goal' for x in plan['items']):
+    plan=call({'kind':'reconcile','cursor':plan['next_cursor']})
+item=next(x for x in plan['items'] if x['id']=='fixture')
+assert not item['change'] and item['blocked_by']
+call({'kind':'reconcile','mode':'apply','id':'fixture','object_kind':'goal','expected_revision':item['expected_revision'],'request_id':'blocked'},False)
+turn('separate','Investigate the separate project.','The separate investigation remains ongoing.')
+row=rt.store.read('followup_turn',f.digest('origin:separate'))
+call({'kind':'review','candidate_id':row['id'],'expected_revision':row['revision'],'disposition':'unrelated','goal_ids':['fixture'],
+      'reason':'Reviewed original request and final reply; separate project only','request_id':'scope-review'})
+# Reviewing the newest unrelated turn cannot hide an older unresolved cancellation.
+assert not rt.store.goal('fixture')[0]['followup'].get('delivery_basis')
+vmod=importlib.import_module(pkg+'.views');cmod=importlib.import_module(pkg+'.content_io')
+call({'kind':'reconcile','mode':'apply','id':'fixture','object_kind':'goal',
+      'expected_revision':cmod.revision(vmod.canonical(rt.store.goal('fixture')[0])), 'request_id':'older-cancel-blocks'},False)
+row=rt.store.read('followup_turn',f.digest('origin:cancel'))
+call({'kind':'review','candidate_id':row['id'],'expected_revision':row['revision'],'disposition':'already_fulfilled',
+      'reason':'Synthetic related request explicitly reviewed; no real execution exists','request_id':'related-reviewed'})
+view=importlib.import_module(pkg+'.views');content=importlib.import_module(pkg+'.content_io')
+g=rt.store.goal('fixture')[0]
+call({'kind':'reconcile','mode':'apply','id':'fixture','object_kind':'goal','expected_revision':content.revision(view.canonical(g)),'request_id':'project-reviewed'})
 assert not rt.store.all('notification')
 assert f.snapshot(home)['due_total']==0
 native.close();rt.close()
-print(json.dumps({'ok':True,'native_completed_interrupted_failed_missing':True,'hooks_auto_converge':True,'duplicate_replay_rollback':True,'dry_run_byte_identical':True,'scope_child_protected':True,'ordinary_question':True,'handoff_unconfirmed':True,'model_calls':0,'sends':0}))
+print(json.dumps({'ok':True,'native_completed_interrupted_failed_missing':True,'corrupt_durable_unknown':True,
+                 'negative_and_mention_do_not_handoff':True,'explicit_reviewed_handoff_replay':True,
+                 'unrelated_finished_inquiry_unblocks':True,'related_input_blocks':True,'scoped_semantic_review':True,
+                 'duplicate_replay_rollback':True,'dry_run_byte_identical':True,'scope_child_protected':True,
+                 'model_calls':0,'sends':0}))

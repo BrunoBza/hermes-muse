@@ -26,6 +26,12 @@ def valid_basis(fu, records):
 
 
 
+def denies_delivery(text):
+    """A contradiction veto, never a positive natural-language delivery classifier."""
+    import re
+    return bool(re.search(r"(?i)(\bnot ready\b|\b(?:not|never|haven't|hasn't) delivered\b|尚未准备好|没有交付|尚未交付|还未交付|未完成交付)", text))
+
+
 def reply_evidence(goal, reply, history):
     """Same original-text and version checks for new handoffs and legacy projections."""
     from .store import digest
@@ -42,10 +48,33 @@ def reply_evidence(goal, reply, history):
     refs = [entry.get("ref", {}).get("resource") or entry.get("ref", {}).get("id")
             or "message:" + str(entry.get("ref", {}).get("message_id", ""))
             for entry in verification.get("evidence_refs", [])]
-    relevant = bool(text and reply.get("message_id") and (
+    relevant = bool(text and not denies_delivery(text) and reply.get("message_id") and (
         verification.get("summary") and verification["summary"] in text
         or any(isinstance(ref, str) and len(ref) >= 8 and ref in text for ref in refs)))
     return bool(text), relevant
+
+
+def handoff_review(goal, reply, now):
+    """Receipt of the parent's explicit semantic handoff action, not text inference."""
+    from .views import canonical
+    from .content_io import revision
+    fu = goal['followup']
+    return {'id': goal['id'], 'reply_id': reply['id'], 'session_id': goal['session_id'],
+            'scope_revision': fu['scope_revision'], 'verification_revision': revision(canonical(fu.get('verification', {}))),
+            'assistant_hash': reply['assistant_hash'], 'message_id': reply['message_id'], 'reviewed_at': now}
+
+
+def reviewed_reply(goal, reply, history, review):
+    """Replay only a reviewed, unchanged original final reply for this result version."""
+    if not isinstance(review, dict) or not reply.get('message_id'):
+        return False
+    expected = handoff_review(goal, reply, review.get('reviewed_at'))
+    if review != expected or not history.get('available'):
+        return False
+    from .store import digest
+    return sum(m.get('role') == 'assistant' and m.get('id') == reply.get('message_id')
+               and digest(m.get('text', '')) == reply.get('assistant_hash') and not denies_delivery(m.get('text', ''))
+               for m in history.get('messages', [])) == 1
 
 
 def inferred_basis(home, goal, records, now):
@@ -61,9 +90,13 @@ def inferred_basis(home, goal, records, now):
         return basis(fu, "notice", notice["id"], notice["status"], now)
     reply = next((r for r in records.get("followup_reply", []) if r["id"] == fu.get("reply_id")), None)
     if reply and reply.get("session_id") == goal.get("session_id"):
-        from .conversation import read_conversation
-        history = read_conversation(home, reply["session_id"], reply.get("observed_at", now) - 5)
-        if reply_evidence(goal, reply, history)[1]:
+        from .views import Views
+        from .followup_recovery import exact_reply
+        review = Views(home).record('followup_handoff', goal['id'])
+        if not review:
+            return None
+        resolved, history = exact_reply(home, reply, since=fu.get('source_created_at', goal['created']))
+        if review and resolved and reviewed_reply(goal, resolved, history, review):
             return basis(fu, "reply", reply["id"], "recorded_unconfirmed", now)
     return None
 

@@ -68,3 +68,6 @@ The following actions additionally accept an optional `request_id` (1..128 chara
 
 
 `followup_update(kind=reconcile)` is read-only by default (`mode=dry_run`), with ten descriptors per lexical cursor page. `apply` and `rollback` require an originating private parent, request_id and expected_revision; the existing scope_token rejects cross-profile references. Apply accepts only an object identity, never caller-authored state. Existing records/followup_repair preserve per-object preimages and conditional rollback; goal bodies are retained. Native status and original reply evidence are rechecked before writes. See companion followup.md for the exact migration sequence and live-page concurrency rule.
+
+
+Followup `kind=review,disposition=unrelated` accepts existing `goal_ids` (1..20) after a settled original native reply and unchanged source are checked. It stores per-goal scope/hash-bound relevance review, leaving the turn's global disposition unchanged. `reconcile` dry-run includes blocked_by for otherwise provable changes held by newer unresolved input. Both diagnosis and apply share the same gate. Explicit `kind=handoff` records a scoped semantic review in existing records/followup_handoff; automatic replay requires this receipt and unchanged actual final text, not substring relevance.
