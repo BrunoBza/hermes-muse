@@ -151,3 +151,84 @@ class RebindTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'changed or is unavailable'):
             self.service.followups.update(args,session_id='s',turn_id='u')
         self.assertIsNone(self.store.goal('g')[0]['followup'].get('delivery_basis'))
+
+    def second_goal(self):
+        self.service.goal_create(dict(id='other',title='Other',description='Different work',completion_criteria='Other artifact',signal_id='u'))
+        return self.store.goal('other')[0]
+
+    def test_successor_cannot_be_consumed_by_two_goals(self):
+        _,refs=self.successor();self.second_goal()
+        self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        with self.assertRaisesRegex(ValueError,'already used by another goal'):
+            self.bind(binding='successor',goal_id='other',expected_revision=self.store.goal('other',with_fingerprint=True)[2],receipt_id='next',evidence_refs=refs)
+        # A legacy duplicate fact must invalidate BOTH consumers during revalidation.
+        g=self.store.goal('g')[0];other,b=self.store.goal('other')
+        other['followup']['successor']=dict(g['followup']['successor'])
+        self.store.save_goal(other,b)
+        self.assertFalse(successful_successor(self.service,g))
+        self.assertFalse(successful_successor(self.service,other))
+
+    def test_original_receipt_and_owner_reserve_successor_even_with_alias_receipts(self):
+        _,refs=self.successor();self.second_goal()
+        alias=self.receipt('alias','deleg_next')
+        for fields in ({'receipt_id':'next'}, {'owner':alias['owner']}, {'receipt_id':'alias'},
+                       {'successor':{'receipt_id':'alias','owner':alias['owner']}}):
+            with self.subTest(fields=fields):
+                other,b=self.store.goal('other');other['followup']={**other['followup'],'receipt_id':None,'owner':None,'successor':None,**fields}
+                self.store.save_goal(other,b)
+                with self.assertRaisesRegex(ValueError,'already used by another goal'):
+                    self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+
+    def delivered_successor(self):
+        _,refs=self.successor();self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        g=self.store.goal('g')[0]
+        self.service.followups.update(dict(kind='verification',goal_id='g',expected_revision=g['followup']['revision'],result_state='verified',verified_at=self.now,summary='Actual result',sources=['message:1'],evidence_refs=refs),session_id='s',turn_id='u')
+        r=self.bind();g=self.store.goal('g')[0]
+        self.service.followups.update(dict(kind='handoff',goal_id='g',expected_revision=g['followup']['revision'],reply_id=r['reply_id'],reason='Parent reviewed actual delivery'),session_id='s',turn_id='u')
+        return refs
+
+    def test_rebinding_preserves_unknown_delivery_and_blocks_duplicate_candidate(self):
+        refs=self.delivered_successor();before=self.store.goal('g')[0]
+        self.assertEqual(before['followup']['delivery_state'],'unknown')
+        self.assertTrue(before['followup']['delivery_basis'])
+        with self.assertRaisesRegex(ValueError,'existing delivery evidence'):
+            self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        self.assertEqual(self.store.goal('g')[0],before)
+        with self.assertRaisesRegex(ValueError,'unknown.*duplicate'):
+            self.service.notification_add(dict(goal_id='g',final_result=True))
+        self.assertEqual(self.store.all('notification'),[])
+
+    def test_open_state_with_existing_basis_also_cannot_rebind(self):
+        refs=self.delivered_successor();g,b=self.store.goal('g')
+        g['followup']['delivery_state']='open';self.store.save_goal(g,b)
+        with self.assertRaisesRegex(ValueError,'existing delivery evidence'):
+            self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        self.assertEqual(self.store.goal('g')[0],g)
+
+    def test_successor_receipt_and_message_must_each_strictly_follow_acceptance(self):
+        _,refs=self.successor();at=self.store.goal('g')[0]['followup']['source_created_at']
+        receipt=self.store.read('followup_receipt','next');receipt['observed_at']=at
+        self.store.write('followup_receipt','next',receipt)
+        with self.assertRaisesRegex(ValueError,'after acceptance'):
+            self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        receipt['observed_at']=at+1;self.store.write('followup_receipt','next',receipt)
+        with sqlite3.connect(self.home/'state.db') as db:
+            db.execute('UPDATE messages SET timestamp=? WHERE id=1',(at,))
+        with self.assertRaisesRegex(ValueError,'predates accepted goal'):
+            self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
+        self.assertIsNone(self.store.goal('g')[0]['followup'].get('successor'))
+
+    def test_concurrent_consumers_only_one_can_bind(self):
+        from concurrent.futures import ThreadPoolExecutor
+        _,refs=self.successor();self.second_goal()
+        requests=[dict(binding='successor',goal_id=key,expected_revision=self.store.goal(key,with_fingerprint=True)[2],receipt_id='next',evidence_refs=refs,reason='Explicit same-scope parent judgment') for key in ('g','other')]
+        def attempt(data):
+            try:
+                rebind(self.service.followups,data,self.now,session_id='s',turn_id='u')
+                return True
+            except ValueError as exc:
+                self.assertIn('already used by another goal',str(exc))
+                return False
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(attempt,requests)),[False,True])
+        self.assertEqual(sum(bool(g['followup'].get('successor')) for g in self.store.goals()),1)

@@ -118,3 +118,12 @@ Same request/key replays its receipt; changed arguments conflict. A pending/cras
 request stays unknown: inspect its repair preimage, never dispatch or invent proof.
 Cancelled/paused goals, unrelated sessions and newer unresolved directions retain
 their existing guards. Copy rehearsals are not production authorization or cleanup.
+
+A native successor owner/receipt is reserved by existing goal facts (including
+original attempts and other goals' historical successor bindings). It cannot be
+shared across goals, even via another receipt for the same owner; duplicate facts
+invalidate success revalidation. Receipt and result times must be strictly after
+goal acceptance. A successor rebind cannot reopen delivery: non-open delivery
+state or any existing reply/notice/basis causes rejection, preserving unknown
+delivery and final-notification deduplication. Use the existing explicit delivery
+workflow; do not rebind to retry a notification.

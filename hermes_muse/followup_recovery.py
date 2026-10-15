@@ -320,7 +320,7 @@ def successor_evidence(service, goal, receipt_id, refs):
     view = Views(service.store.home)
     receipt = view.record('followup_receipt', receipt_id) or {}
     if (receipt.get('session_id') != goal['session_id'] or not receipt.get('tool_call_id')
-            or receipt.get('observed_at', 0) < goal['followup'].get('source_created_at', goal['created'])
+            or receipt.get('observed_at', 0) <= goal['followup'].get('source_created_at', goal['created'])
             or receipt_id == goal['followup'].get('receipt_id')):
         raise DomainError('permission_denied', 'Successor needs a distinct native receipt from this goal session after acceptance')
     intent = view.record('followup_intent', receipt.get('intent_id')) if receipt.get('intent_id') else None
@@ -328,6 +328,17 @@ def successor_evidence(service, goal, receipt_id, refs):
         raise DomainError('permission_denied', 'Successor is bound to another goal')
     if receipt.get('owner') == goal['followup'].get('owner'):
         raise DomainError('permission_denied', 'Successor cannot be the original owner')
+    # Derive ownership from goal facts, including historical/cancelled scopes and
+    # alternate receipts for the same native owner. No second reservation ledger.
+    for other in service.store.goals():
+        if other['id'] == goal['id']:
+            continue
+        fu = other.get('followup') or {}
+        for binding in (fu, fu.get('successor') or {}):
+            bound_receipt = view.record('followup_receipt', binding.get('receipt_id')) or {}
+            if (binding.get('receipt_id') == receipt_id
+                    or receipt.get('owner') and receipt['owner'] in (binding.get('owner'), bound_receipt.get('owner'))):
+                raise DomainError('permission_denied', 'Successor receipt or owner is already used by another goal')
     native = native_terminal(service.store.home, receipt)
     if not native or native['native_status'] != 'completed' or native['failed']:
         raise DomainError('source_unavailable', 'Successor native execution is not proven completed')
@@ -338,7 +349,7 @@ def successor_evidence(service, goal, receipt_id, refs):
         db.execute('PRAGMA query_only=ON')
         for ref in refs:
             at, role, tool, call = db.execute('SELECT timestamp,role,tool_name,tool_call_id FROM messages WHERE id=? AND session_id=?', (ref['message_id'], goal['session_id'])).fetchone()
-            if at < goal['followup'].get('source_created_at', goal['created']):
+            if at <= goal['followup'].get('source_created_at', goal['created']):
                 raise DomainError('permission_denied', 'Successor evidence predates accepted goal')
             if role == 'assistant' and at < receipt['observed_at']:
                 raise DomainError('permission_denied', 'Assistant result predates successor receipt')
@@ -355,8 +366,10 @@ def successful_successor(service, goal):
     if bound.get('scope_revision') != goal['followup']['scope_revision']:
         return False
     try:
-        current = successor_evidence(service, goal, bound.get('receipt_id'), [r['ref'] for r in bound.get('evidence_refs', [])])
-        return all(current[k] == bound.get(k) for k in ('owner', 'original_receipt_id', 'original_owner', 'original_intent_id'))
+        from .locks import file_lock
+        with file_lock(service.store.root / 'mutations.lock'):
+            current = successor_evidence(service, goal, bound.get('receipt_id'), [r['ref'] for r in bound.get('evidence_refs', [])])
+            return all(current[k] == bound.get(k) for k in ('owner', 'original_receipt_id', 'original_owner', 'original_intent_id'))
     except (ValueError, KeyError, TypeError, sqlite3.Error):
         return False
 
@@ -409,10 +422,13 @@ def rebind(followups, data, now, *, session_id='', turn_id=''):
         else:
             if fu['execution_state'] in {'paused', 'needs_user', 'cancelled'}:
                 raise DomainError('permission_denied', 'Successor cannot reopen a closed or paused goal')
+            if (fu.get('delivery_state') != 'open' or any(fu.get(k) for k in
+                    ('delivery_basis', 'reply_id', 'notice_id', 'delivery_ref'))):
+                raise DomainError('permission_denied', 'Successor binding cannot replace existing delivery evidence or reopen delivery')
             successor = successor_evidence(followups.service, goal, data.get('receipt_id'), data.get('evidence_refs'))
             successor.update(reason=reason, bound_at=now)
             after['followup'].update(successor=successor, execution_state='finished', result_state='unverified',
-                                     delivery_state='open', delivery_basis=None, blocker_class=None)
+                                     blocker_class=None)
         after['followup']['revision'] += 1
         result = save_repair(store, 'goal', goal['id'], goal, after, body, fingerprint, related=related, parent_session=session_id)
         result['goal_revision'] = store.goal(goal['id'], with_fingerprint=True)[2]

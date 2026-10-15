@@ -76,5 +76,24 @@ request=dict(kind='rebind',binding='successor',goal_id='successor-goal',expected
 r=call(request);assert call(request)==r
 assert rt.store.read('followup_receipt','old')['native_status']=='interrupted'
 call(dict(kind='verification',goal_id='successor-goal',expected_revision=rt.store.goal('successor-goal')[0]['followup']['revision'],result_state='verified',sources=['message:'+str(mid2)],evidence_refs=request['evidence_refs'],verified_at=time.time(),summary='Fixture result',request_id='verify-successor'))
-print(json.dumps({'native_registry':True,'reply_and_successor':True,'replay':True,'rollback':True,'child_cron_foreign_scope_rejected':True,'original_interrupted_preserved':True,'max_response_bytes':262144}))
+# Independent-review regressions: occupancy and delivery remain protected at registry boundary.
+rt.service.goal_create(dict(id='second-consumer',title='Other goal',description='Different work',completion_criteria='Different artifact',signal_id='u'))
+other_request={**request,'goal_id':'second-consumer','expected_revision':rt.store.goal('second-consumer',with_fingerprint=True)[2],'request_id':'duplicate-successor'}
+rejected=call(other_request,False)
+assert 'already used by another goal' in rejected['error'],rejected
+assert not rt.store.goal('second-consumer')[0]['followup'].get('successor')
+answer='Fixture successor result delivered to the parent'
+reply_mid=db.append_message('origin','assistant',answer)
+bound=call(dict(kind='rebind',binding='reply',goal_id='successor-goal',expected_revision=rt.store.goal('successor-goal',with_fingerprint=True)[2],message_id=reply_mid,message_hash=revision(answer.encode()),reason='Exact final result for this scope',request_id='successor-reply'))
+call(dict(kind='handoff',goal_id='successor-goal',expected_revision=bound['followup_revision'],reply_id=bound['reply_id'],reason='Parent confirms result delivery in this final reply',request_id='successor-handoff'))
+before=rt.store.goal('successor-goal')[0]
+assert before['followup']['delivery_state']=='unknown' and before['followup']['delivery_basis']
+rejected=call({**request,'request_id':'rebind-after-handoff','expected_revision':rt.store.goal('successor-goal',with_fingerprint=True)[2]},False)
+assert 'existing delivery evidence' in rejected['error'],rejected
+assert rt.store.goal('successor-goal')[0]==before
+raw=handle_function_call('muse_manage',transport({'action':'notification_add','data':{'goal_id':'successor-goal','final_result':True,'event_key':'duplicate-final','message':'Fixture result','rationale':'Final result','sources':['message:'+str(reply_mid)],'verified_at':time.time(),'expires':time.time()+3600,'request_id':'duplicate-final'}}),session_id='origin',turn_id='u',tool_call_id=uuid.uuid4().hex,enabled_toolsets=['muse'])
+assert len(raw.encode())<=262144
+rejected=json.loads(raw);assert not rejected['ok'] and 'never queue a duplicate' in rejected['error'],rejected
+assert rt.store.all('notification')==[]
+print(json.dumps({'native_registry':True,'reply_and_successor':True,'replay':True,'rollback':True,'child_cron_foreign_scope_rejected':True,'original_interrupted_preserved':True,'response_limit_bytes':262144,'successor_double_use_rejected':True,'unknown_delivery_preserved':True,'duplicate_final_candidate_rejected':True}))
 rt.close();db.close()
