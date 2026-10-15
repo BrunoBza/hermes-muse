@@ -2,9 +2,16 @@
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
-Hermes Muse is a personal assistant plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent), inspired by the proactive interactions in [Meta's Muse](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/). It follows up on things you care about after the conversation ends, and gets in touch when something needs your attention.
+An assistant that only answers when you speak leaves a lot undone: the trip you mentioned on Monday, the reply you were waiting for, the decision you said you would make by month-end. Hermes Muse is a plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that lets Hermes follow up on those things itself. It was inspired by the proactive interactions in [Meta's Muse](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/).
 
-It uses Hermes memory, Cron, Skills and subagents with the user's existing model and memory backend. Reminders go to the current profile's Bot Chat. Hindsight, Obsidian and other named services are optional. This is an independent project, unaffiliated with Meta/Muse; its code and prompts are independently written.
+In practice it looks like this:
+
+- You say you are going to Hangzhou this weekend. Before you leave it checks the forecast and your calendar, and only speaks up if something changed enough to matter.
+- You say you want to pick a bicycle by month-end. It keeps comparing options in the background, brings back what it found, and closes the goal only when you have actually decided.
+- A reply you were waiting for arrives, or a meeting moves. The next check notices, reads the original mail or event, and tells you in your Bot Chat what happened and why it matters.
+- "Done", "later" and "stop bringing this up" each do something different. When there is nothing worth saying, it stays quiet.
+
+It is built on what Hermes already has: memory, Cron, Skills and subagents, with your existing model and memory backend. Reminders go to the current profile's Bot Chat. Hindsight, Obsidian and other named services are optional. This is an independent project, unaffiliated with Meta/Muse; its code and prompts are independently written.
 
 ## Install
 
@@ -16,7 +23,7 @@ Installation uses the selected profile. Use `hermes -p default plugins install x
 
 If you maintain explicit `platform_toolsets` lists, include `muse` in the platforms where you use the plugin. An enabled plugin can otherwise load its prompts while its state tool remains unavailable.
 
-Requires Hermes 0.21.5 and the relevant plugin APIs; see the [tested baseline](docs/ACCEPTANCE.md). First load creates the workspace, registers one Skill, one state tool and six lifecycle/tool hooks, adds one system prompt section, and creates six recurring Cron jobs. There is no feature selection or separate initialization command. Without a running host, loading happens at the next Hermes start.
+Requires Hermes 0.21.5 and the relevant plugin APIs; see the [tested baseline](docs/ACCEPTANCE.md). First load creates the workspace, registers one Skill, one state tool (`muse_manage`) and seven hooks, adds one system prompt section, and creates six recurring Cron jobs. There is no feature selection or separate initialization command. Without a running host, loading happens at the next Hermes start.
 
 The system prompt section takes effect in new conversations. Background execution requires a running scheduler and an available model. Scheduled checks, research and content generation use the existing model and tools at their normal cost.
 
@@ -31,18 +38,18 @@ The plugin sets up its jobs and rules on first load, using the existing Hermes m
 | Follow goals over time | Persistent tasks and a task board are built in. You organize long-term goals, progress, related watches and stopping conditions. | Follow plans agreed in conversation across days and close them on verified outcomes. Closing a goal stops its watches while keeping any final result awaiting delivery. |
 | Prepare work in the background | Asynchronous subagents are built in. You configure which goals to research regularly and how to save and use the results. | Independent multi-step work goes to native asynchronous subagents while the main conversation stays available. Research batches finish and return without repeated status requests. |
 | Offer relevant suggestions | Can suggest next steps using conversation and memory. Ongoing research, selection and storage need their own setup. | Prepares suggestions from goals and verified personal context, records evidence and feedback, and leaves new proposals for the user to choose. Accepted work keeps moving. |
-| Personalized Feed | Search, writing and scheduled tasks are available. You assemble topic selection, article records, feedback and updates. | A local Feed is ready to use: existing memory, interests and feedback guide quiet article generation without requiring a saved goal. Search, discuss or delete articles through chat. |
+| Personalized Feed | Search, writing and scheduled tasks are available. You assemble topic selection, article records, feedback and updates. | A local Feed is ready to use: existing memory, interests and feedback guide quiet article generation without requiring a saved goal. Search, discuss or delete articles through chat, or browse them on the Dashboard page. |
 | Adjust reminders and stop following up | Can update preferences and stop jobs. You define how feedback affects reminders, goals and watches. | “Done,” “later” and “stop bringing this up” have distinct effects. Completion, cancellation or rescheduling prompts a fresh check of pending reminders; temporary interests expire after 14 days. |
 | Handle everyday errands | Can use browser and external tools. Calling, booking and payment services and workflows need to be connected and configured. | The plugin does not supply calling, booking or payment workflows. Existing tools remain available. |
 
-Feed has no dedicated page. New research batches use native Hermes execution and result callbacks; restart recovery depends on the host, and unknown outcomes are never automatically replayed. Memory upkeep, verification and writing depend on the configured model and tools; see the [implementation details](docs/FEATURE-COVERAGE.md).
+Feed articles can be browsed on the read-only [Dashboard and Desktop pages](#unified-dashboard-host). New research batches use native Hermes execution and result callbacks; restart recovery depends on the host, and unknown outcomes are never automatically replayed. Memory upkeep, verification and writing depend on the configured model and tools; see the [implementation details](docs/FEATURE-COVERAGE.md).
 
 ## Skill and tool
 
 | Name | Purpose |
 | --- | --- |
 | [hermes-muse:companion](skills/companion/SKILL.md) | Shared procedures for conversations and background jobs, including thinking through a request’s practical consequences and carrying the plan into the task: connection and device checks, goals and interests, reminders and feedback, memory and relationships, Feed, delegation, checks of its own actions, subscribed daily briefings, and weekly/monthly reviews. |
-| muse_manage | Lets the assistant record and query source checks, goals, interests, reminders, feedback, Feed and research progress, keep source progress by connection, account and resource, distinguish complete, partial and failed checks, maintain expiry, stopping and delivery state, and inspect native tool receipts and unresolved mistakes. |
+| muse_manage | One tool with 41 actions ([interface](docs/INTERFACE.md)). Lets the assistant record and query source checks, goals, interests, reminders, feedback, Feed and research progress, keep source progress by connection, account and resource, distinguish complete, partial and failed checks, maintain expiry, stopping and delivery state, and inspect native tool receipts and unresolved mistakes. Lists are paged and requests and responses have size limits; changes carry the object's revision and a request key, so a repeated call replays its receipt instead of writing twice. |
 
 The Skill is registered with the plugin and its files stay in the plugin directory. Conversations load the relevant procedure as needed; all six recurring Cron jobs use the same Skill. Use normal conversation and let the assistant call the tool. When you change a task, it considers the purpose and practical consequences, updates the actual task and verifies the result before confirming. Checking frequency and notification frequency stay separate; the reply explains what matters in natural language, without a fixed script.
 
@@ -89,6 +96,7 @@ Apple PIM receipts also support a bounded observation mode: actual returned even
 | post_llm_call | Associates owned Cron sessions with their native execution IDs for self-review. After replying to a user message of at least 80 characters, waits for five quiet minutes before scheduling memory upkeep. New input cancels the pending timer; at most three early triggers per day. |
 | transform_llm_output | For a patrol/watch that used the state tool, replaces the final response with approved notice bodies or `[SILENT]`. Bot Chat notices and weekly/monthly reports include the same receiving guidance. Ordinary conversations and direct channel reports are unchanged. |
 | pre_tool_call / post_tool_call | Correlate accepted intents with actual native calls/receipts; prevent unsafe replay and preserve unknown outcomes. |
+| on_skill_lifecycle | Marks a recent `skill_manage` write receipt as observed by Hermes' skill lifecycle. Without a matching tool receipt nothing is inferred. Memory and skill writes are classified from their actual tool results (saved, waiting approval, submitted but unconfirmed, failed, unchanged, unknown), keeping only minimal correlation references. |
 | on_session_end | Clears the current turn's busy flag so later reminders do not keep waiting on a conversation that has ended. |
 
 User-signal hooks process private and local conversations, skipping groups, Cron, subagent input and completion callbacks. Older misclassified background messages remain as audit evidence outside the user-signal inbox. The output hook is bound to the current owned patrol/watch or governance execution; it does not modify ordinary replies. Delayed upkeep uses the existing memory Cron job. Unloading the plugin from the running process cancels its temporary timers.
@@ -108,7 +116,7 @@ Delegates are instructed to remain read-only under inherited host permissions; t
 
 The plugin does not pin a model or provider on its recurring jobs. Hermes resolves the model at each run: **per-job model → current profile’s `cron.model` → profile’s main model**. Without a Cron default, hourly background work can use the same expensive model as your main conversation. Set a background model before leaving the scheduler running.
 
-Muse workers always use public native delegation, respecting the user’s delegation provider/model/reasoning/concurrency settings. The parent is only the unconfigured default; native stateless Cron joins results. Research allocates at most three workers within lower user limits. Audit workers read full paged current-profile evidence through muse_manage; the parent verifies and commits reviewed slots. Every page is preserved. No global configuration changes. See [exact boundaries](docs/CATALOG-COMPATIBILITY.md).
+Muse workers always use public native delegation, respecting the user’s delegation provider/model/reasoning/concurrency settings. The parent is only the unconfigured default (leave `delegation.provider` and `delegation.model` empty to keep the parent model); native stateless Cron joins results. Research allocates at most three workers within lower user limits. Audit workers read full paged current-profile evidence through muse_manage; the parent verifies and commits reviewed slots. Every page is preserved. No global configuration changes. See [exact boundaries](docs/CATALOG-COMPATIBILITY.md).
 
 For example, merge this into the current profile’s `config.yaml`, using a model and provider available in your installation (`llm` here is a configured provider name):
 
@@ -123,7 +131,7 @@ agent:
 
 Hermes currently resolves reasoning from a per-job `reasoning_effort`, then the model-specific override, then `agent.reasoning_effort`; `cron.reasoning_effort` is not a supported setting on the tested baseline. The example sets `high` for Luna in this profile, including ordinary conversations that use Luna. Existing per-job model/reasoning choices take priority and survive plugin reloads. Cron defaults are read on the next run. Bot Chat’s receiving turn uses its own conversation model configuration and adds another model call; `cron.model` does not select that receiving model. The plugin does not write these model settings for you. Research workers follow Hermes delegation settings, including `delegation.model`; `cron.model` does not override their model. Audit uses parallel evidence review with direct parent review as fallback.
 
-Schedules use the current Hermes timezone. Watches with an explicit expiry stop when due. Explicitly requested timed reminders and watches can create additional recorded Cron jobs; six is the permanent job count. A patrol delivers approved notices in its own final response, with no extra delivery Cron. Deferred candidates stay for the next patrol. Delivery is checked against that execution’s persistent receipt, independently of later patrols.
+Schedules use the current Hermes timezone. Watches with an explicit expiry stop when due. Explicitly requested timed reminders and watches can create additional recorded Cron jobs; six is the permanent job count. A new repeating watch (interval or cron) must be provably at least 30 minutes apart or it is refused; a one-off schedule is exempt, and existing jobs are not rewritten. A patrol delivers approved notices in its own final response, with no extra delivery Cron. Deferred candidates stay for the next patrol. Delivery is checked against that execution’s persistent receipt, independently of later patrols.
 
 All six fixed jobs call the model on schedule to inspect the information relevant to their work. Each patrol discovers available connections and devices and checks mail, calendars, reminders and other sources even without saved goals or interests. Each source reuses a stable record and a tested read recipe. Verified tool aliases reuse the established source record; duplicate observations are archived without advancing its successful checkpoint. Different accounts and collections stay separate. Reducing calls must preserve substantive content, sound judgment, proactive help, relevant context and timely follow-through. A failed read calls for diagnosis and recovery where possible in the same run; consequential gaps in ordinary monitoring can merit a notice even without a saved goal. A missing permission is checked before a protected query, and an unavailable source is never treated as an empty result. Expected and checked resources are recorded separately; a missing calendar, unfinished page or failed read cannot advance the successful checkpoint. Checks consume model calls; tools and subagents can add usage.
 
@@ -184,7 +192,7 @@ Nightly review can also maintain a short Working lessons section in `muse/AGENTS
 
 Installation does not rewrite Hermes core, SOUL, native USER/MEMORY files, user project AGENTS files or the configured `agent.system_prompt` value. During use, the assistant saves new facts through existing memory tools.
 
-Private/local user inputs retain their first 8,000 characters, truncation flag, turn/session identity and time; associated routes can include chat/user/thread/message IDs. The newest 500 remain; older rows are cleaned on a subsequent input only after both independent hourly and nightly cursors cover them. Unprocessed backlog can exceed 500 and retention time is not fixed. Native history, research result payloads, followup metadata, goals/memory/Feed and backups have separate retention; see [compatibility and data scope](docs/CATALOG-COMPATIBILITY.md). The plugin collects no telemetry and excludes group chats from personal companion workflows. See [SECURITY.md](SECURITY.md) for data scope.
+Private/local user inputs retain their first 8,000 characters, truncation flag, turn/session identity and time; associated routes can include chat/user/thread/message IDs. The newest 500 remain; older rows are cleaned on a subsequent input only after both independent hourly and nightly cursors cover them. Unprocessed backlog can exceed 500 and retention time is not fixed. Idempotency journals and oversized tool results (kept in `state.db` so a repeated call replays and long results can be paged) may contain written content or tool output and have no automatic expiry. Native history, research result payloads, followup metadata, goals/memory/Feed and backups have separate retention; see [compatibility and data scope](docs/CATALOG-COMPATIBILITY.md). The plugin collects no telemetry and excludes group chats from personal companion workflows. See [SECURITY.md](SECURITY.md) for data scope.
 
 ## Use
 
@@ -245,9 +253,9 @@ MIT licensed.
 Recent conversation context uses bounded previews with complete revision-checked paging; partial evidence blocks task-notice approval. See the [conversation procedure](skills/companion/references/conversations.md). Cron watch creation respects `cron.allow_agent_scheduling`; local goal registration creates no job. New watch prompt/stop fields each allow 4,000 characters without truncation. New repeating watches must provably remain at least 30 minutes apart; one-off schedules are exempt. Existing jobs and user schedule edits are preserved.
 
 
-## Scoped tools and plugin pages (0.2.0)
+## Scoped tools and plugin pages
 
-**Unreleased platform limitation:** the new secure content/lock implementation is POSIX-specific and currently breaks the previous Windows support. Windows CI remains in place; no Windows pass or safe fallback is claimed. Restoring Windows requires a secure native-handle implementation, not disabling symlink checks.
+**Platform limitation:** the secure content/lock implementation is POSIX-specific and breaks the Windows support of 0.1.x. Windows CI remains in place; no Windows pass or safe fallback is claimed. Restoring Windows requires a secure native-handle implementation, not disabling symlink checks.
 
 Muse includes Dashboard and Desktop pages for the complete Feed, topics, ideas and goals. APIs are authenticated by Hermes and check the requested profile on every GET. Browsing creates no read state or model work. Desktop changes start as a draft in a selected originating chat; the user sends it through normal tool authorization. Install the same package on the Desktop device to obtain its entry; a remote backend install alone does not install the client entry.
 
@@ -259,7 +267,7 @@ Workers use public native delegation and respect delegation.* routing/reasoning/
 
 Memory acknowledgements follow actual receipts: saved, waiting approval, submitted but unconfirmed, failed, unchanged or unknown. The plugin stores only minimal correlation references. Approval completion, provider durability and automatic background-event merging remain host/provider contract limits; no core patches or new daemons are installed.
 
-## Unified Dashboard host (0.2.1)
+## Unified Dashboard host
 
 Install and enable the full Muse package in the default Hermes profile using Hermes plugin management. The Dashboard discovers this package and serves its authenticated page/API. The page initially lists registered profiles only; explicitly select one to view its Feed, Ideas and Goals. Default is labelled “managed by Hermes”: both UI and backend refuse its install/disable/remove operations.
 
@@ -269,7 +277,7 @@ Profile paths come from Hermes root/home and registry APIs, including custom HER
 
 With terminal.backend=docker, only terminal execution enters Docker. Muse tools and namespaced companion skills remain dispatched by Hermes on the host, against the same active profile; no Muse mounts, copies or Docker-specific path branch is needed. A whole Hermes instance running in another container or remote HOME is a separate installation: equal profile names do not share state, and this page does not manage remote instances.
 
-## Bounded maintenance context (0.2.2)
+## Bounded maintenance context
 
 context/status now return a section directory instead of an unbounded aggregate. Collection pages share content_read cursors and revisions; large metadata is explicitly paged through metadata_ref. Maintenance signal windows store references and served ranges in existing records: new arrivals after through wait for the next window, edits/backdated arrivals invalidate it, and checkpoints reject unread signals including timestamp ties. See companion references/context.md for the exact flow. Old flat context consumers must migrate in the same release.
 
@@ -294,7 +302,7 @@ The following actions additionally accept an optional `request_id` (1..128 chara
 Scheduled source coverage follows explicit user requirements and the profile's declared responsibilities. The optional free-text `Coverage scope` section in PROACTIVE_PREFERENCES.md refines sources/exclusions; it adds no schema or runtime policy branch. A general assistant without exclusions retains full 30-day calendar/pagination/advance preparation, mail, reminders and useful travel coverage even without goals. Specialist roles do not probe unrelated personal sources; unavailable or failing in-scope sources retain honest gaps/recovery. See companion [Coverage scope](skills/companion/references/proactivity.md#coverage-scope). Native permissions and existing delivery/checkpoint rules remain authoritative. Reload refreshes shipped Cron prompts while preserving the profile's existing preference prose, task IDs, schedules, pauses and targets. Model compliance needs post-deployment observation; static/isolated fixtures do not establish it.
 
 
-## Followup convergence (0.2.3)
+## Followup convergence
 
 Native completion and session-end hooks reconcile proven terminal delegation receipts and replay explicitly reviewed original-session handoffs. Unreviewed text, even a summary/path match, never proves delivery. Corrupt or conflicting native evidence remains unknown; only an absent durable row permits manifest fallback. Host durable/aggregate manifest evidence wins over callback text; interrupted is not successful, and a recorded reply is not transport confirmation. Terminal orphan evidence stays stored but leaves the pending selection. Only a closed set of complete literal inquiries (for example `What is the status?` or `状态如何？`) can settle automatically, including a final answer with optional follow-on questions; topic-bearing or other free-form inquiries require explicit review; ambiguity and unknown outcomes remain for review. The existing review action can mark a settled turn unrelated to specified goal scopes, never all work. Older unreviewed cancellations still block; dry-run exposes the exact blocking candidate.
 

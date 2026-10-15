@@ -70,7 +70,7 @@ class CompatibilityTests(unittest.TestCase):
     def test_noncontiguous_chunk_cannot_fake_complete_and_partial_read_survives_resume(self):
         state=self.state('s',['A'*40000])
         last=page(self.store,state,{'revision':state['revision'],'offset':36000},self.now)
-        self.assertIsNone(last['next_offset']);self.assertFalse(last['complete'])
+        self.assertEqual(last['next_offset'],0);self.assertFalse(last['complete'])  # Points at the first unread offset, not the tail.
         for off in (0,12000,24000):
             result=page(self.store,state,{'revision':state['revision'],'offset':off},self.now)
         self.assertTrue(result['complete'])
@@ -112,6 +112,6 @@ class CompatibilityTests(unittest.TestCase):
         check=self.service.conversation_states()['s']  # Internal delivery/finalization path.
         self.assertFalse(check['complete'])
         tail=self.service.conversation_read({'session_id':'s','revision':state['revision'],'offset':1000})
-        self.assertIsNone(tail['next_offset'])
+        self.assertEqual(tail['next_offset'],0)
         self.assertFalse(tail['complete'])  # The internal preview was never a returned tool receipt.
         self.assertTrue(self.service.conversation_read({'session_id':'s','revision':state['revision'],'offset':0})['complete'])

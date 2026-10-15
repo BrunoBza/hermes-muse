@@ -89,6 +89,11 @@ def run(home):
             from hermes_cli.config import load_config_readonly
             config = {**load_config_readonly(), "cron": {"allow_agent_scheduling": True}}
             with patch("hermes_cli.config.load_config_readonly", return_value=config):
+                for schedule in ("every 5m", "*/10 * * * *"):  # Interval and cron floors; once is exempt below.
+                    short = json.loads(runtime.handle({"action":"watch_create", "data": arguments(runtime, "watch_create", {
+                        "goal_id":"bicycle", "signal_id":"new-user-choice", "schedule":schedule,
+                        "prompt":"Read fixture", "stop_condition":"User chooses"})}, session_id="source-session"))
+                    assert not short["ok"] and "30 minutes" in short["error"], (schedule, short)
                 for schedule in ("every 30m", "0,30 * * * *", "0 * * * *", "in 1m"):
                     watch = call("watch_create", goal_id="bicycle", signal_id="new-user-choice", schedule=schedule,
                                  prompt="x" * 4000, stop_condition="User chooses a bicycle")

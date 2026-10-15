@@ -2,7 +2,9 @@ import concurrent.futures
 import contextlib
 import json
 import shutil
+import sys
 import tempfile
+import types
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -46,6 +48,12 @@ def prepare(home):
 
 
 class CompanionTests(unittest.TestCase):
+    def test_cron_feed_brief_edit_never_wakes_its_own_job(self):
+        self.service.preference_update({"feed_brief": "Gardening"}, cron=True)
+        self.assertEqual(self.host.woken, [])
+        self.service.preference_update({"feed_brief": "Urban gardening"})
+        self.assertEqual(self.host.woken, ["feed-pulse"])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -784,6 +792,14 @@ class CompanionTests(unittest.TestCase):
 
 
 class HookTests(unittest.TestCase):
+    def setUp(self):
+        # The stdlib-only unit job has no Hermes core; stub the one module the hooks import.
+        child = types.ModuleType("agent.delegation_context")
+        child.is_delegated_child_context = lambda: False
+        patcher = patch.dict(sys.modules, {"agent.delegation_context": child})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_receiving_guidance_never_creates_user_intent_or_background_loop(self):
         from hermes_muse.runtime import Runtime
         from hermes_muse.handoff import render_result, receiving_instructions

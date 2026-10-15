@@ -1,12 +1,14 @@
-# 0.2.3 — followup evidence convergence (local candidate)
+# 0.2.3 — followup evidence convergence (2026-10-15)
 
 - Converge native delegation terminal evidence through existing hooks; retain interrupted/failed distinctions and unknown safety.
 - Replay explicitly reviewed original-session handoffs without claiming transport delivery; unreviewed summary/path mentions never prove delivery. Settle only complete literal inquiries from a closed set without goals; arbitrary prefixes/topics and mixed instructions remain pending for explicit review.
 - Fail closed on corrupt/conflicting durable evidence. Expose newer-input blockers and support goal-scoped semantic unrelated reviews without hiding older cancellations.
 - Add bounded followup reconciliation dry-run, per-object CAS apply/preimage backup and conditional rollback in the existing tool/store.
 - Retain current-profile/child protections, cancellation, budgets and no-redispatch behavior. No production migration or deployment implied.
+- v0.2.3 is the first public release since 0.1.27; 0.2.0–0.2.2 were developed on the same branch and ship with it.
+- Document the 30-minute floor for new repeating watches and the parent-model default for workers consistently, and add regression tests for the floor, Cron `feed_brief` edits not waking `feed-pulse`, and the unit suite on hosts without Hermes core or with symlinked temp directories.
 
-# 0.2.2 — bounded context and maintenance evidence (local candidate)
+# 0.2.2 — bounded context and maintenance evidence (2026-10-15)
 
 - Discoverable context/status section pages and frozen, reference-only signal review windows; reject unread checkpoint advances.
 - Current conversation descriptors and unchanged-prefix coverage let long evidence reads survive appends without skipping corrections.
@@ -15,14 +17,14 @@
 - Align scheduled source coverage with explicit profile duties and optional preference prose; keep the full general-assistant default and all existing execution/delivery safeguards.
 - Keep default Dashboard/profile management, child read boundaries, notification budgets and transport semantics. No deployment implied.
 
-# 0.2.1 — unified local profile Dashboard
+# 0.2.1 — unified local profile Dashboard (2026-10-15)
 
 - Full default installation hosts the page; explicit registered-profile selection before content reads.
 - Backend-enforced default read-only administration; native install/enable and data-preserving disable for other profiles.
 - Reuse owned-task preparation, retain user pauses/cadences, isolate lifecycle processes and credentials, and keep GETs free of initialization.
 - Clarify host-dispatched Muse tools with Docker terminal and independent remote Hermes instances. Windows compatibility remains unresolved.
 
-# 0.2.0 — approved implementation (unreleased)
+# 0.2.0 — approved implementation (2026-10-15)
 
 - Scoped content tools, explicit CAS/request keys, pure read projections and plugin-owned UI.
 - Correlated memory feedback, current audit identities and replayable delivery evidence.
@@ -212,7 +214,7 @@ Rewrote the English and Chinese READMEs around the project's inspiration from Me
 
 Initial independent companion assembly: one Skill, four script-gated recurring jobs, five prompts, transactional operational state, goals/subgoals and expiring interests, reminder preparation and native delivery tracking, quiet upkeep, reflection/relationships, silent Feed operations, bounded research, profile-scoped initialization and documented native-remove cleanup. No mandatory external provider or core patch.
 
-### Independent acceptance followup (unreleased)
+### Independent acceptance followup (2026-10-15)
 
 - Restrict installation preparation to a whole, operation-matching Muse command.
 - Confine saved feedback to its original turn and invalidate superseded unannounced saves before replay.
@@ -220,7 +222,7 @@ Initial independent companion assembly: one Skill, four script-gated recurring j
 - Resolve source aliases once through the shared service resolver so CAS protects the actual canonical row.
 - Document the unresolved Windows regression; no unsafe fallback or Windows acceptance claim.
 
-### Child evidence and parallel review correction (unreleased)
+### Child evidence and parallel review correction (2026-10-15)
 
 - Allow native children to read current-profile evidence/content without an extra grant service; keep global writes/checkpoints parent-owned.
 - Route child context/status and history to pure projections; add paged evidence indexes and time/session/job narrowing.

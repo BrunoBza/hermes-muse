@@ -17,7 +17,7 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.home = Path(self.tmp.name)
+        self.home = Path(self.tmp.name).resolve()  # Content reads refuse symlinked parents, e.g. macOS /var.
         self.store = prepare(self.home)
         self.now = 1800000000
         self.service = Companion(self.store, Host(), lambda: self.now)

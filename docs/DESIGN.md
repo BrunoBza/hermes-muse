@@ -63,7 +63,7 @@ Weekly/monthly gates always wake at the scheduled tick, even without active goal
 
 ## Evidence for background work
 
-Foreground and background calls use the 0.1.2 action rules. Operations that require user evidence still need a recent recorded user signal, and renewing an interest needs a newer signal. Cron context alone does not deny state writes. Watches use native schedules and no plugin-specific 30-minute or 4000-character limit. New notifications go to the current profile's Bot Chat.
+Foreground and background calls use the 0.1.2 action rules. Operations that require user evidence still need a recent recorded user signal, and renewing an interest needs a newer signal. Cron context alone does not deny state writes. New repeating watches (interval or cron) must stay at least 30 minutes apart and prompt/stop fields allow 4000 characters each; one-off schedules are exempt and existing jobs are not rewritten. New notifications go to the current profile's Bot Chat.
 
 ## Lifecycle contracts
 
