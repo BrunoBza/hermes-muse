@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import test_followup_recovery as recovery_tests
@@ -46,7 +47,7 @@ class RebindTests(unittest.TestCase):
 
     def test_reply_rollback_and_cas(self):
         before=self.goal(); r=self.bind()
-        with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch('agent.delegation_context.is_delegated_child_context',return_value=False,create=True):
+        with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch.dict('sys.modules', {'agent.delegation_context': SimpleNamespace(is_delegated_child_context=lambda: False)}):
             apply(self.service.followups,dict(mode='rollback',repair_id=r['repair_id'],expected_revision=r['revision']),self.now,session_id='s')
         self.assertEqual(self.store.goal('g')[0],before)
         self.assertIsNone(self.store.read('followup_reply',r['reply_id']))
@@ -113,7 +114,7 @@ class RebindTests(unittest.TestCase):
             pending = [r for r in self.store.all('followup_repair') if r['state']=='pending'][-1]
             # File may commit before the DB transaction; related rows roll back.
             g = self.store.goal('g')[0]
-            with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch('agent.delegation_context.is_delegated_child_context',return_value=False,create=True):
+            with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch.dict('sys.modules', {'agent.delegation_context': SimpleNamespace(is_delegated_child_context=lambda: False)}):
                 apply(self.service.followups,dict(mode='rollback',repair_id=pending['id'],expected_revision=revision(canonical(g))),self.now,session_id='s')
             self.assertIsNone(self.store.goal('g')[0]['followup'].get('bound_reply_id'))
             self.assertEqual(self.store.all('followup_reply'),[])
@@ -133,7 +134,7 @@ class RebindTests(unittest.TestCase):
         before=self.store.goal('g')[0]
         r=self.bind(binding='successor',receipt_id='next',evidence_refs=refs)
         self.assertEqual(self.store.goal('g')[0]['status'],'completed')
-        with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch('agent.delegation_context.is_delegated_child_context',return_value=False,create=True):
+        with patch('hermes_muse.runtime.session_info',return_value={'cron':False}), patch.dict('sys.modules', {'agent.delegation_context': SimpleNamespace(is_delegated_child_context=lambda: False)}):
             apply(self.service.followups,dict(mode='rollback',repair_id=r['repair_id'],expected_revision=r['revision']),self.now,session_id='s')
         self.assertEqual(self.store.goal('g')[0],before)
 
