@@ -118,7 +118,7 @@ def worker(home):
     assert all(r['native_status']=='unknown' for r in orphans)
     old=call('followup_update',{'kind':'due','offset':0})
     rt.store.write('followup_receipt','late',{'id':'late','intent_id':None,'session_id':'origin','observed_at':now,'native_status':'unknown'})
-    assert call('followup_update',{'kind':'due','offset':old['next_offset'],'snapshot_revision':old['snapshot_revision']},ok=False)['code']=='revision_conflict' 
+    assert call('followup_update',{'kind':'due','offset':old['next_offset'],'snapshot_revision':old['snapshot_revision']},ok=False)['code']=='revision_conflict'
     print(json.dumps({'native_large_context':'PASS','signals':552,'native_truncated_signal_full_body':True,'source_checks':400,'orphan_pages':32,'real_registry_hooks':True,'child_write_denied':True,'scope_mismatch_denied':True,'append_only_history_progress':True,'feed_correction_CAS_replay':True,'finding_absent_creation':True,'notification_partial_then_reviewed':True,'oversized_mutation_receipt':'reference, replay preserved','provider_calls':0,'external_sends':0}))
     native.close();rt.close()
 

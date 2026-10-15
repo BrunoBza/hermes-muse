@@ -548,6 +548,10 @@ class Followups:
                 row["goal_ids"] = ids
             row.update(disposition=disposition, reason=bounded(data.get("reason"), 2000),
                        revision=row["revision"] + 1)
+            # This result has no public content object; reject before committing.
+            if len(json.dumps({"ok": True, "result": row}, ensure_ascii=False).encode()) > 256 * 1024:
+                from .content_io import DomainError
+                raise DomainError("size_limit", "Followup review result exceeds the response budget; reduce linked goals before committing")
             Store.put(db, TURN_KIND, row["id"], row)
             return row
 

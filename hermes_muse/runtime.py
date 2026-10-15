@@ -213,6 +213,7 @@ class Runtime:
                         complete = all(r.get("status") == "checked" and r.get("started_at", r.get("started", 0)) >= run["started"] for r in rows)
                         result = {"complete": complete, "through": self.service.clock(), "goal_id": goal["id"],
                                   "goal_status": goal["status"], "stop_condition": data["stop_condition"], "source_check_ids": refs}
+                        self._response(result)  # Reject an unaddressable oversized result before staging completion.
                     else:
                         result = self.service.review_complete(data, require_window=True)
                     self.service.runs.stage(run, "review", {"complete": result["complete"], "through": result["through"], "summary": data["summary"]})
@@ -265,16 +266,25 @@ class Runtime:
         raw = json.dumps({"ok": True, "result": result}, ensure_ascii=False, allow_nan=False)
         if len(raw.encode()) > 256 * 1024:
             from .contracts import CAS
-            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea'}
+            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation',
+                     'notification_prepare': 'notice', 'notification_queue': 'notice', 'notification_handoff': 'notice'}
             kind = kinds.get(action)
             if action == 'feedback':
                 kind = {'notification': 'notice', 'interest': 'interest'}.get((data or {}).get('kind'))
             record = result.get('notification', result) if isinstance(result, dict) else {}
             key = record.get('id') if isinstance(record, dict) else None
+            if action in {'preferences', 'installation_prepare'}:
+                key = 'current'
+            if action == 'followup_update' and (data or {}).get('goal_id'):
+                kind, key = 'goal', data['goal_id']
             if kind and key:
-                return json.dumps({'ok': True, 'result': {'id': key, 'result_is_reference': True,
+                bounded = {'id': key, 'result_is_reference': True,
                     'content_ref': {'action': 'content_read', 'data': {'kind': kind, 'id': key}},
-                    'instruction': 'Mutation committed. Read the result through its paginated content_ref; reuse the original request_id for a replay, never repeat the write with a new key.'}}, ensure_ascii=False)
+                    'instruction': 'State committed. Read its paginated content_ref. If this action accepts request_id, replay only the original key/arguments; do not repeat a committed change.'}
+                for field in ('changed', 'reviewed', 'partial', 'requires_host_action', 'final_response'):
+                    if isinstance(result, dict) and field in result:
+                        bounded[field] = result[field]
+                return Runtime._response(bounded)
             raise DomainError("size_limit", "Response exceeds 256 KiB; request a smaller page or source/window batch")
         return raw
 

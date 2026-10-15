@@ -671,10 +671,12 @@ class Companion:
         result = dict(self.store.read("notification", key))
         result["final_response"] = self.prepared_response(delivery) if delivery else "[SILENT]"
         if result.get("delivery_gate", {}).get("blocked_by", []) in (["conversation_unavailable"], ["conversation_changed_or_unreviewed"], ["conversation_partial"]):
-            states = self.conversation_states(served=True)
-            result.update(recent_conversations=states, conversation_revisions=self.conversation_revisions(states))
-            result["instruction"] = "Review the current user/assistant outcomes, resolve stale candidates or call notification_review, then prepare again. Do not infer completion merely from a reply."
-            return result
+            # Descriptors do not serve text. Only bounded conversation_read pages
+            # may advance coverage on the public preparation path.
+            return {"id": key, "status": result["status"], "final_response": result["final_response"],
+                    "delivery_gate": result["delivery_gate"],
+                    "continuation": {"action": "context", "data": {"section": "conversations", "limit": 25}},
+                    "instruction": "Read every missing conversation body page, then review relevance and prepare again. This continuation is not served evidence."}
         result["instruction"] = ("Return final_response as this Cron's final answer. No extra send or Cron." if delivery
                                  else "Saved for the next patrol; no delivery task was created.")
         return result
@@ -720,6 +722,10 @@ class Companion:
                 and row["status"] == "dispatching"]
         if not rows:
             return "[SILENT]"
+        return self._render_prepared_response(rows, delivery)
+
+    @staticmethod
+    def _render_prepared_response(rows, delivery):
         destination = (delivery.get("route") or {}).get("deliver")
         parts = []
         for row in rows:
@@ -805,6 +811,15 @@ class Companion:
                 row.update(status="pending", job_id=None)
                 self.store.put(db, "notification", key, row)
                 return ""
+            if delivery:
+                batch = [r for r in self.store.rows(db, "notification")
+                         if r.get("direct_delivery") and r.get("execution_id") == delivery["execution_id"]
+                         and r["status"] == "dispatching" and r["id"] != key]
+                text = self._render_prepared_response([*batch, row], delivery)
+                # Leave room for the bounded reference receipt around final_response.
+                if len(json.dumps(text, ensure_ascii=False).encode()) > 256 * 1024 - 4096:
+                    from .content_io import DomainError
+                    raise DomainError("size_limit", "Prepared delivery exceeds the tool response budget; no delivery or budget was reserved for this item. Keep it pending and narrow the verified payload or use the next existing patrol.")
             if row["priority"] in {"ordinary", "time_sensitive"}:
                 budget_key = self.host.local_now(now).date().isoformat() + ":" + row["priority"]
                 self.store.put(db, "budget", budget_key, self.store.get(db, "budget", budget_key, 0) + 1)
