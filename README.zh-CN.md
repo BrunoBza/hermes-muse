@@ -1,4 +1,4 @@
-# Hermes Muse
+# Hermes Muse 0.3.0
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
@@ -291,4 +291,4 @@ context/status改为有界目录，按section/cursor读集合；长信号使用�
 纯读页面不会初始化或迁移。离线副本可用`python -m hermes_muse.migration --home <home>`，
 追加`--rollback`可在目标未被新活动改动时回滚；先备份并停止写入，不整库覆盖。
 回滚完成后保留原归档；再次升级使用新归档，前一轮存为`followup-0.2.x-<id>`。
-本候选未部署，Windows仍不支持。
+Windows仍不支持。

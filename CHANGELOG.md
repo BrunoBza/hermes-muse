@@ -1,8 +1,8 @@
-# 0.3.0 — simple goals (unreleased)
+# 0.3.0 — simple goals (2026-10-16)
 
 - Replace execution/result/delivery followup state machines with active/done/cancelled goals, optional owner handles, short due summaries and one optional integer write revision.
-- Remove followup rebind/reconcile/repair, orphan receipts, reply-hash handoff checks, newer-input freezes, signal age gates and caller scope tokens.
-- Archive original 0.2.x goals/records in a one-time migration with guarded offline rollback. Preserve profile/child/Cron boundaries, notification delivery and unknown-write safety.
+- Breaking: remove followup_update (including rebind/reconcile/repair), orphan receipts, reply-hash handoff checks, newer-input freezes, signal age gates and caller scope_token fields. Use context(section=followups) and parent goal_update instead.
+- Archive original 0.2.x goals/records on first load. Back up and stop writers before offline rollback: run python -m hermes_muse.migration --home <profile-home> --rollback using 0.3.0, then restore the prior plugin code. New goal edits refuse rollback; completed cycles remain archived on a later upgrade. Preserve profile/child/Cron boundaries, notification delivery and unknown-write safety.
 
 # 0.2.4 — historical followup rebinding (2026-10-15)
 
