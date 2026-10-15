@@ -74,7 +74,6 @@ def capabilities(selected_profile: str | None = None):
     except _views.DomainError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {
-        "scope_token": scope,
         "read_only": True,
         "profile": selected_profile or current.home.name,
         "features": ["feed", "ideas", "goals", "topics", "pagination"],
@@ -112,7 +111,6 @@ def article(
     offset: int = 0,
     length: int = 12000,
     revision: str | None = None,
-    scope_token: str | None = None,
     selected_profile: str | None = None,
 ):
     return read(
@@ -122,7 +120,6 @@ def article(
             "offset": offset,
             "length": length,
             "revision": revision,
-            "scope_token": scope_token,
         }, selected_profile
     )
 
@@ -143,7 +140,6 @@ def goal(
     offset: int = 0,
     length: int = 12000,
     revision: str | None = None,
-    scope_token: str | None = None,
     selected_profile: str | None = None,
 ):
     return read(
@@ -153,7 +149,6 @@ def goal(
             "offset": offset,
             "length": length,
             "revision": revision,
-            "scope_token": scope_token,
         }, selected_profile
     )
 

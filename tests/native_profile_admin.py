@@ -96,8 +96,7 @@ def worker(home):
         values=list(pool.map(get,['default','cedar']*5))
     assert [v['metadata']['title'] for v in values]==['Default private fixture','Cedar private fixture']*5
     assert os.environ==env_before
-    wrong=client.get(base+'/goals/default-goal?profile=default&selected_profile=cedar&scope_token='+values[0]['scope_token'],headers=headers)
-    assert wrong.status_code==403
+    assert all('scope_token' not in value for value in values)
     rows=profiles(); r=post('cedar','disable',rows['cedar']['revision'],'disable-one');assert r.status_code==200,r.text
     assert not r.json()['profile']['enabled'] and r.json()['data_retained']
     with profile_scope(target):

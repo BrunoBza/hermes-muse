@@ -16,7 +16,7 @@ class ResponseBoundaryTests(unittest.TestCase):
             ('preferences', {'blocked_topics': ['x'*300000]}, {}, 'preferences', 'current'),
             ('installation_prepare', {'pending_evidence': ['x'*300000], 'partial': True, 'requires_host_action': True}, {}, 'installation', 'current'),
             ('run_complete', {'id': 'r', 'gaps': ['x'*300000]}, {}, 'run', 'r'),
-            ('followup_update', {'summary': 'x'*300000}, {'goal_id': 'g'}, 'goal', 'g'),
+            ('goal_update', {'id':'g','progress': ['x'*300000]}, {'id': 'g'}, 'goal', 'g'),
             ('notification_prepare', {'id': 'n', 'sources': ['x'*300000], 'final_response': 'Approved previous notice'}, {}, 'notice', 'n'),
         ):
             with self.subTest(action=action):
@@ -56,14 +56,3 @@ class ResponseBoundaryTests(unittest.TestCase):
             self.assertEqual(row['status'], 'pending')
             self.assertNotIn('execution_id', row)
             self.assertFalse(store.all('budget'))
-
-    def test_unaddressable_review_rejects_before_commit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            store = prepare(Path(tmp))
-            service = Companion(store, Host(), lambda: 1800000000)
-            original = {'id': 'candidate', 'revision': 1, 'goal_ids': ['x'*300000]}
-            store.write('followup_turn', 'candidate', original)
-            with self.assertRaises(DomainError):
-                service.followups.review({'candidate_id': 'candidate', 'expected_revision': 1,
-                    'disposition': 'no_commitment', 'reason': 'Synthetic'})
-            self.assertEqual(store.read('followup_turn', 'candidate'), original)

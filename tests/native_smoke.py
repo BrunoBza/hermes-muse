@@ -93,7 +93,7 @@ def main():
                     return raw
                 status = json.loads(call_registered({"action": "context"}))
                 assert status["ok"], status
-                assert status["result"]["scope_token"] and "workspace" not in status["result"]
+                assert status["result"]["sections"] and "workspace" not in status["result"]
                 # Exercise the actual native finalizer with the registered plugin hook.
                 from types import SimpleNamespace
                 import time, uuid

@@ -161,12 +161,6 @@ class Views:
             canonical([str(self.home.absolute()), self.manifest()["installation_id"]])
         )
 
-    def check_scope(self, token):
-        if token is not None and token != self.scope():
-            raise DomainError(
-                "profile_mismatch", "Object reference belongs to another scope"
-            )
-
     @contextmanager
     def database(self):
         # SQLite opens a pinned, no-follow file descriptor, not a re-resolved path.
@@ -352,7 +346,6 @@ class Views:
             "kind",
             "id",
             "resource",
-            "scope_token",
             "offset",
             "length",
             "revision",
@@ -368,11 +361,10 @@ class Views:
                 "Unknown content fields: " + ", ".join(sorted(set(data) - allowed)),
             )
         scope = self.scope()
-        self.check_scope(data.get("scope_token"))
         kind, key = data.get("kind"), data.get("id")
         if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}:
             raise DomainError("invalid_argument", "Unsupported content kind")
-        base = {"scope_token": scope, "kind": kind, "observed_at": time.time()}
+        base = {"kind": kind, "observed_at": time.time()}
         if key is None or kind == "goal_file" and not data.get("resource"):
             limit = data.get("limit", 25)
             if type(limit) is not int or not 1 <= limit <= 100:
@@ -421,7 +413,6 @@ class Views:
                         "id": key if kind == "goal_file" else item,
                         **({"resource": item} if kind == "goal_file" else {}),
                         "revision": rev,
-                        "scope_token": scope,
                         **summary,
                     }
                 )
@@ -493,9 +484,9 @@ class Views:
             body, metadata = json.dumps(metadata, ensure_ascii=False, sort_keys=True), {}
         elif len(canonical(metadata)) > 32768:
             metadata_ref = {'action': 'content_read', 'data': {'kind': kind, 'id': key, 'part': 'metadata',
-                            'revision': rev, 'scope_token': scope, **({'resource': data['resource']} if data.get('resource') else {})}}
+                            'revision': rev, **({'resource': data['resource']} if data.get('resource') else {})}}
             metadata = {k: v for k, v in metadata.items() if (k in {'id', 'status', 'title'} and len(str(v)) <= 1000)
-                        or (k == 'followup' and len(canonical(v)) <= 16384)}
+                        }
         end = offset + length
         return {
             **base,

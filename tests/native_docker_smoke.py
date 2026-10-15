@@ -128,20 +128,8 @@ with tempfile.TemporaryDirectory(prefix="muse-docker-") as directory:
                     {"action": "content_read", "data": {"kind": "goal", "id": "g"}}
                 )
                 assert read["result"]["metadata"]["title"] == label
-                scope = read["result"]["scope_token"]
-                if first_scope:
-                    refused = container_request(
-                        {
-                            "action": "content_read",
-                            "data": {
-                                "kind": "goal",
-                                "id": "g",
-                                "scope_token": first_scope,
-                            },
-                        }
-                    )
-                    assert refused["code"] == "profile_mismatch"
-                first_scope = scope
+                refused=container_request({'action':'content_read','data':{'kind':'goal','id':'g','home':'foreign'}})
+                assert refused['code']=='invalid_argument'
                 written = container_request(
                     {
                         "action": "content_write",
@@ -149,7 +137,6 @@ with tempfile.TemporaryDirectory(prefix="muse-docker-") as directory:
                             "kind": "goal_file",
                             "id": "g",
                             "resource": "files/container.md",
-                            "scope_token": scope,
                             "body": "Container fixture " + label,
                             "expected_revision": "absent",
                             "request_id": "container-write",

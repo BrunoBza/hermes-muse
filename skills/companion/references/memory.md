@@ -14,7 +14,7 @@ The quiet-pass event merely advances the existing upkeep job after substantial c
 
 1. Determine exactly what the user wants forgotten versus no longer monitored. Stop-topic and cancellation are not memory erasure.
 2. Inspect affected owned records, memories, people/groups, dreams/alignment, goal evidence/files, Feed, queued/running tasks and external memory sources. Scope deletion to the request.
-3. Stop rewriters/owned monitoring first. `forget` accepts `{kind:"interest"|"notification"|"feed"|"goal", id, signal_id, external_status_verified?}`. It removes that owned record and indexed derived Feed/notices, and leaves a minimal non-content suppression record. It returns remaining locations to inspect; this is NOT a global-erasure claim.
+3. Stop rewriters/owned monitoring first. `forget` accepts `{kind:"interest"|"notification"|"feed"|"goal", id, signal_id}`. It removes that owned record and indexed derived Feed/notices, and leaves a minimal non-content suppression record. It returns remaining locations to inspect; this is NOT a global-erasure claim.
 4. Use native memory/provider tools for native facts, and forget(kind=content) or constrained content_write for Muse notes. Clean the returned goal artifact/evidence locations after checking scope. Respect native approvals. External memory claims/indices need the backend's actual deletion/retraction API and verification. Do not assume deleting a local Markdown file deletes a remote bank.
 5. Re-read active retrieval surfaces, confirm stopped tasks, and explain any remaining historical sessions, backups or inaccessible indices. Never silently claim those were purged. If an old mention reappears, it does not authorize reconstruction.
 

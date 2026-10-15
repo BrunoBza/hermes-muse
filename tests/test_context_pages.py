@@ -96,7 +96,10 @@ class ContextPagesTests(unittest.TestCase):
         self.assertLess(len(json.dumps(context(self.service,{})).encode()),12000)
         self.assertIn('operation_review', context(self.service,{}))
         self.store.save_goal({'id':'large-goal','title':'Goal','status':'active','progress':['x'*50000],
-                              'followup':{'owner':{'id':'native-owner'},'execution_state':'running'}}, '# Goal')
+                              'revision':1,'owner':{'kind':'native_delegation','id':'native-owner'}}, '# Goal')
         projected=view.read({'kind':'goal','id':'large-goal'})
         self.assertFalse(projected['metadata_complete'])
-        self.assertEqual(projected['metadata']['followup']['owner']['id'],'native-owner')
+        meta='';off=0
+        while off is not None:
+            part=view.read({**projected['metadata_ref']['data'],'offset':off});meta+=part['body'];off=part['next_offset']
+        self.assertEqual(json.loads(meta)['owner']['id'],'native-owner')

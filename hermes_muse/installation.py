@@ -112,7 +112,7 @@ def prepare_owned(home, store, host, data, *, origin="tool"):
             host.save_manifest(manifest)
         pending["pending_evidence"] = [
             {"kind": kind, "id": r["id"]}
-            for kind in ("followup_intent", "run")
+            for kind in ("run",)
             for r in store.all(kind)
             if r.get("state", r.get("status"))
             in {"pending", "dispatching", "unknown", "running", "partial"}

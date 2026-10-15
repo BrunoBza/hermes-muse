@@ -10,7 +10,6 @@ from .calendar import assemble, validate_window, window
 from .handoff import render_result
 from .operations import Operations
 from .runs import Runs
-from .followup import Followups, capture, initial
 from .store import DAY, GOVERNANCE_JOBS, bounded, digest, epoch, identifier, is_background_message, stamp
 
 DEFAULT_PREFERENCES = {"start_hour": 9, "end_hour": 22, "ordinary_per_day": None,
@@ -22,7 +21,6 @@ class Companion:
         self.store, self.host, self.clock = store, host, clock
         self.operations = Operations(store, host, clock)
         self.runs = Runs(store, host, clock)
-        self.followups = Followups(self)
 
     def preferences(self):
         text = self.store.path("PROACTIVE_PREFERENCES.md").read_text(encoding="utf-8")
@@ -80,7 +78,6 @@ class Companion:
                 return
             self.store.put(db, "signal", turn_id, {"id": turn_id, "session_id": session_id,
                            "text": str(text)[:8000], "created": now, "truncated": len(str(text)) > 8000})
-            capture(self.store, db, self.store.get(db, "signal", turn_id))
             previous = self.store.get(db, "session", session_id, {})
             self.store.put(db, "session", session_id, {**previous, "id": session_id,
                            "last_signal": now, "active": True, "route": route or previous.get("route"), "turn_id": turn_id})
@@ -93,131 +90,104 @@ class Companion:
 
     def require_signal(self, db, signal_id):
         row = self.store.get(db, "signal", bounded(signal_id, 160))
-        if not row or is_background_message(row.get("text")) or row["created"] < self.clock() - DAY:
-            raise ValueError("A real user signal from the last 24 hours is required")
+        if not row or is_background_message(row.get("text")):
+            raise ValueError("An original user signal is required")
         return row
 
-    def goal_create(self, data):
+    def goal_create(self, data, *, session_id=""):
         now = self.clock()
-        key = identifier(data.get("id") or uuid.uuid4().hex[:12])
+        key = identifier(data.get('id') or uuid.uuid4().hex[:12])
         with self.store.transaction() as db:
-            signal = self.require_signal(db, data.get("signal_id"))
-            if self.store.path(f"workspace/goals/{key}/GOAL.md").exists():
-                raise ValueError("Goal already exists; use goal_update")
-            if signal["created"] <= self.store.get(db, "forgotten", "goal:" + key, 0):
-                raise ValueError("Forgotten goal cannot be recreated from old authority")
-            parent_id = data.get("parent_id")
+            signal = self.require_signal(db, data['signal_id']) if data.get('signal_id') else None
+            origin = session_id or (signal or {}).get('session_id')
+            if not origin or signal and signal['session_id'] != origin:
+                raise ValueError('A private parent session is required')
+            if self.store.path(f'workspace/goals/{key}/GOAL.md').exists():
+                raise ValueError('Goal already exists; use goal_update')
+            if self.store.get(db, 'forgotten', 'goal:' + key):
+                raise ValueError('Forgotten goal ID cannot be reused')
+            parent_id = data.get('parent_id')
             if parent_id:
                 parent, _ = self.store.goal(parent_id)
-                if parent.get("parent_id") or parent["status"] != "active":
-                    raise ValueError("Subgoals require an active top-level parent")
-            deadline = epoch(data["deadline"]) if data.get("deadline") else None
-            if deadline and deadline <= now:
-                raise ValueError("A new goal deadline must be in the future")
-            record = {"id": key, "title": bounded(data.get("title"), 200), "status": "active",
-                      "parent_id": parent_id, "created": now, "updated": now,
-                      "research_review_at": min(deadline or now + 30 * DAY, now + 30 * DAY),
-                      "deadline": deadline, "external_ref": data.get("external_ref"),
-                       "source_signal": signal["id"], "session_id": signal["session_id"], "progress": []}
-            record["followup"] = initial(now, signal["id"], signal["created"])
-            body = f"# {record['title']}\n\n{bounded(data.get('description'))}\n\n## Completion criteria\n{bounded(data.get('completion_criteria'))}\n"
+                if parent.get('parent_id') or parent['status'] != 'active':
+                    raise ValueError('Subgoals require an active top-level parent')
+            from .followup import owner
+            deadline = epoch(data['deadline']) if data.get('deadline') else None
+            record = {'id': key, 'title': bounded(data.get('title'), 200), 'status': 'active',
+                      'revision': 1, 'parent_id': parent_id, 'created': now, 'updated': now,
+                      'research_review_at': min(deadline or now + 30 * DAY, now + 30 * DAY),
+                      'deadline': deadline, 'external_ref': data.get('external_ref'),
+                      'source_signal': (signal or {}).get('id'), 'session_id': origin, 'progress': [],
+                      'owner': owner(data.get('owner')), 'next_check_at': now + 1800,
+                      'waiting_user': False, 'blocked': None}
+            body = f"# {record['title']}\n\n{bounded(data['description'])}\n\n## Completion criteria\n{bounded(data['completion_criteria'])}\n"
             self.store.save_goal(record, body)
-            for folder in ("files", "hidden_files"):
-                self.store.path(f"workspace/goals/{key}/{folder}").mkdir(exist_ok=True)
+            for folder in ('files', 'hidden_files'):
+                self.store.path(f'workspace/goals/{key}/{folder}').mkdir(exist_ok=True)
         return record
 
     def goal_update(self, data):
-        key, now = identifier(data["id"]), self.clock()
+        from .content_io import DomainError
+        from .followup import owner
+        now = self.clock()
         closing = []
         with self.store.transaction() as db:
-            record, body, fingerprint = self.store.goal(key, with_fingerprint=True)
-            status = data.get("status", record["status"])
-            if status not in {"active", "completed", "cancelled"}:
-                raise ValueError("Goal status must be active, completed or cancelled")
-            terminal_outcome = status == "completed"
-            if "research_review_at" in data or (status != record["status"] and not terminal_outcome):
-                self.require_signal(db, data.get("signal_id"))
-            if terminal_outcome and status != record["status"]:
-                if data.get("signal_id"):
-                    self.require_signal(db, data["signal_id"])
-                else:
-                    evidence = data.get("outcome_evidence") or {}
-                    refs = evidence.get("sources")
-                    verified = epoch(evidence.get("verified_at"))
-                    if (not isinstance(refs, list) or not refs
-                            or any(not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in refs)
-                            or not now - DAY <= verified <= now):
-                        raise ValueError("A terminal outcome needs recent original evidence satisfying the accepted criteria")
-                    record["outcome_evidence"] = {"sources": refs, "verified_at": verified,
-                                                      "summary": bounded(evidence.get("summary"), 2000)}
-            if status == "completed" and (record.get("external_ref") or data.get("evidence_refs")):
-                from .evidence import resolve
-                record["outcome_refs"] = resolve(self, data.get("evidence_refs"), record)
-            if "description" in data or "completion_criteria" in data:
-                signal = self.require_signal(db, data.get("signal_id"))
-                if signal["session_id"] != record.get("session_id"):
-                    raise ValueError("Scope changes need current originating user authorization")
-                before, separator, criteria = body.partition("## Completion criteria\n")
+            record, body, fingerprint = self.store.goal(identifier(data['id']), with_fingerprint=True)
+            expected = data.get('expected_revision')
+            if expected is not None and (type(expected) is not int or expected != record['revision']):
+                raise DomainError('revision_conflict', 'Goal changed; merge with current goal', current=record,
+                                  current_revision=record['revision'])
+            status = data.get('status', record['status'])
+            if status not in {'active', 'done', 'cancelled'}:
+                raise ValueError('Goal status must be active, done or cancelled')
+            if status == 'done' and record['status'] != 'done' and not data.get('note'):
+                raise ValueError('Tell the user the result, then record a completion note')
+            if 'description' in data or 'completion_criteria' in data:
+                before, separator, criteria = body.partition('## Completion criteria\n')
                 if not separator:
-                    raise ValueError("Goal section boundaries are ambiguous; preserve content")
-                description = bounded(data["description"]) if "description" in data else before.partition("\n\n")[2].rstrip()
-                criteria = bounded(data["completion_criteria"]) if "completion_criteria" in data else criteria
+                    raise ValueError('Goal section boundaries are ambiguous; preserve content')
+                description = bounded(data['description']) if 'description' in data else before.partition('\n\n')[2].rstrip()
+                criteria = bounded(data['completion_criteria']) if 'completion_criteria' in data else criteria
                 body = f"# {record['title']}\n\n{description}\n\n## Completion criteria\n{criteria}\n"
-                if record.get("followup"):
-                    record["followup"].update(scope_revision=record["followup"]["scope_revision"]+1,
-                        result_state="unverified", delivery_basis=None, delivery_state="open")
-            if data.get("progress"):
-                record["progress"] = (record.get("progress", []) + [{"at": now, "text": bounded(data["progress"], 2000)}])[-50:]
-            record.update(status=status, updated=now)
-            if "research_review_at" in data:
-                review = epoch(data["research_review_at"])
+            if 'owner' in data:
+                record['owner'] = owner(data['owner'])
+            if 'waiting_user' in data:
+                if type(data['waiting_user']) is not bool:
+                    raise ValueError('waiting_user must be boolean')
+                record['waiting_user'] = data['waiting_user']
+            if 'blocked' in data:
+                record['blocked'] = bounded(data['blocked'], 2000) if data['blocked'] else None
+            if 'next_check_at' in data:
+                record['next_check_at'] = epoch(data['next_check_at'])
+            if 'research_review_at' in data:
+                review = epoch(data['research_review_at'])
                 if not now < review <= now + 30 * DAY:
-                    raise ValueError("Research review must be within the next 30 days")
-                record["research_review_at"] = review
-            if record.get("followup"):
-                fu = record["followup"]
-                if status == "completed" and fu.get("intent_id"):
-                    receipt = self.store.get(db, "followup_receipt", fu.get("receipt_id"), {})
-                    from .followup_recovery import successful_successor
-                    if (not receipt.get("terminal") or receipt.get("native_status") == "unknown" or receipt.get("failed")) and not successful_successor(self, record):
-                        raise ValueError("Original native execution is not a verified successful terminal result")
-                if status == "completed" and record.get("outcome_refs"):
-                    evidence = data.get("outcome_evidence") or {}
-                    fu.update(result_state="verified", verification={"verified_at": now,
-                        "summary": evidence.get("summary") or "Accepted completion evidence",
-                        "evidence_refs": record["outcome_refs"],
-                        "sources": [r["ref"].get("resource") or r["ref"].get("id") or r["ref"].get("signal_id") or "message:"+str(r["ref"].get("message_id")) for r in record["outcome_refs"]],
-                        "acceptance": "user_confirmed" if all(r["provenance"] == "user_reported" for r in record["outcome_refs"]) else "artifact_reviewed"}, delivery_basis=None)
-                fu["revision"] += 1
-                if status != "active":
-                    fu["execution_state"] = "cancelled" if status == "cancelled" else "finished"
-                if status == "cancelled":
-                    fu["scope_revision"] += 1
-                    fu["owner_cancellation_confirmed"] = False
-                    if fu["delivery_state"] not in {"confirmed", "unknown"}:
-                        fu["delivery_state"] = "suppressed"
+                    raise ValueError('Research review must be within the next 30 days')
+                record['research_review_at'] = review
+            for field in ('note', 'progress'):
+                if data.get(field):
+                    record['progress'] = (record['progress'] + [{'at': now, 'text': bounded(data[field], 2000)}])[-50:]
+            record.update(status=status, updated=now, revision=record['revision'] + 1)
             self.store.save_goal(record, body, expected_hash=fingerprint)
-            if status != "active":
-                closing.append(key)
-                for child in self.store.goals():
-                    if child.get("parent_id") == key and child["status"] == "active":
-                        child, child_body, child_fingerprint = self.store.goal(child["id"], with_fingerprint=True)
-                        child.update(status="cancelled", updated=now)
-                        if child.get("followup"):
-                            child["followup"].update(execution_state="cancelled", delivery_state="suppressed",
-                                revision=child["followup"]["revision"] + 1, scope_revision=child["followup"]["scope_revision"] + 1)
-                        self.store.save_goal(child, child_body, expected_hash=child_fingerprint)
-                        closing.append(child["id"])
-                for idea in self.store.rows(db, "interest"):
-                    if idea.get("goal_id") in closing and idea["status"] in {"candidate", "active", "accepted"}:
-                        idea["status"] = "cancelled"
-                        self.store.put(db, "interest", idea["id"], idea)
-                for row in self.store.rows(db, "notification"):
-                    if row.get("goal_id") in closing and row["status"] in {"candidate", "pending", "queued"} and not row.get("final_result"):
-                        row["status"] = "cancelled"
-                        self.store.put(db, "notification", row["id"], row)
-        for owner in closing:
-            self.host.pause_owner(owner)
+            if status != 'active':
+                closing.append(record['id'])
+                if status == 'cancelled':
+                    for child in self.store.goals():
+                        if child.get('parent_id') == record['id'] and child['status'] == 'active':
+                            child, child_body, child_hash = self.store.goal(child['id'], with_fingerprint=True)
+                            child.update(status='cancelled', updated=now, revision=child['revision'] + 1)
+                            self.store.save_goal(child, child_body, expected_hash=child_hash)
+                            closing.append(child['id'])
+                for idea in self.store.rows(db, 'interest'):
+                    if idea.get('goal_id') in closing and idea['status'] in {'candidate', 'active', 'accepted'}:
+                        idea['status'] = 'cancelled'
+                        self.store.put(db, 'interest', idea['id'], idea)
+                for notice in self.store.rows(db, 'notification'):
+                    if notice.get('goal_id') in closing and notice['status'] in {'candidate', 'pending', 'queued'} and not notice.get('final_result'):
+                        notice['status'] = 'cancelled'
+                        self.store.put(db, 'notification', notice['id'], notice)
+        for key in closing:
+            self.host.pause_owner(key)
         return record
 
     def interest_record(self, data, *, idea=False):
@@ -272,12 +242,7 @@ class Companion:
         now = self.clock()
         if row.get("goal_id"):
             goal, _ = self.store.goal(row["goal_id"])
-            if (goal.get("followup") and row.get("followup_scope_revision") is not None
-                    and row["followup_scope_revision"] != goal["followup"]["scope_revision"]):
-                return False
-            if goal.get("followup") and (goal["status"] == "cancelled" or
-                    (row.get("final_result") and goal["followup"]["execution_state"] == "paused") or
-                    (row.get("final_result") and goal["followup"]["delivery_state"] == "unknown")):
+            if goal['status'] == 'cancelled':
                 return False
             if goal["status"] != "active" and not row.get("final_result"):
                 return False
@@ -558,13 +523,6 @@ class Companion:
         return row
 
     def notification_add(self, data):
-        if data.get("goal_id") and data.get("final_result"):
-            goal, _ = self.store.goal(data["goal_id"])
-            fu = goal.get("followup", {})
-            if fu and fu.get("result_state") != "verified":
-                raise ValueError("Verify this dispatch against accepted criteria before preparing its final result")
-            if goal.get("followup", {}).get("delivery_state") == "unknown":
-                raise ValueError("Final reply/delivery outcome is unknown; inspect existing evidence, never queue a duplicate")
         now = self.clock()
         event_key = bounded(data.get("event_key"), 500)
         key = digest(event_key)
@@ -589,13 +547,6 @@ class Companion:
             row["source_snapshot"] = self.source_snapshot(data["source_snapshot"])
             if row["source_snapshot"]["title"] not in row["message"]:
                 raise ValueError("Quote the exact original title in the notice; do not expand or rename it")
-        if row.get("goal_id") and row.get("final_result"):
-            owner, _ = self.store.goal(row["goal_id"])
-            if owner.get("followup"):
-                row["followup_scope_revision"] = owner["followup"]["scope_revision"]
-                row["followup_verified_at"] = owner["followup"].get("verification", {}).get("verified_at")
-                if owner["followup"].get("retry_failed_notice_id"):
-                    row["replaces"] = owner["followup"]["retry_failed_notice_id"]
         if not self.owner_valid(row):
             raise ValueError("Notification owner is inactive or expired")
         with self.store.transaction() as db:
@@ -925,7 +876,7 @@ class Companion:
 
     def forget(self, data):
         kind, key = data["kind"], identifier(data["id"])
-        if kind not in {"interest", "notification", "feed", "goal", "operation_finding", "followup_turn"}:
+        if kind not in {"interest", "notification", "feed", "goal", "operation_finding"}:
             raise ValueError("Unsupported owned record kind")
         with self.store.transaction() as db:
             self.require_signal(db, data.get("signal_id"))
@@ -933,7 +884,7 @@ class Companion:
         if kind == "goal":
             goal_record = self.store.goal(key)[0]
             goal_source = goal_record.get("source_signal")
-            self.goal_update({"id": key, "status": "cancelled", "signal_id": data["signal_id"], "external_status_verified": data.get("external_status_verified", False)})
+            self.goal_update({"id": key, "status": "cancelled", "signal_id": data["signal_id"]})
         with self.store.transaction() as db:
             row = self.store.get(db, kind, key)
             for item in self.store.rows(db, "notification"):
@@ -946,23 +897,11 @@ class Companion:
                     self.store.delete(db, "feed", item["id"])
                     self.store.put(db, "forgotten", "feed:" + item["id"], self.clock())
             if kind == "goal":
-                intents = {r["id"] for r in self.store.rows(db, "followup_intent") if r.get("goal_id") == key}
-                for intent_id in intents:
-                    self.store.delete(db, "followup_intent", intent_id)
-                    self.store.put(db, "forgotten", "followup_intent:" + intent_id, self.clock())
-                for receipt in self.store.rows(db, "followup_receipt"):
-                    if receipt.get("intent_id") in intents:
-                        self.store.delete(db, "followup_receipt", receipt["id"])
-                for candidate in self.store.rows(db, "followup_turn"):
-                    if candidate.get("signal_id") == goal_source or key in candidate.get("goal_ids", []):
-                        self.store.delete(db, "followup_turn", candidate["id"])
                 if goal_source:
                     self.store.delete(db, "signal", goal_source)
                 self.store.put(db, "goal_tombstone", key, {"id": key, "session_id": goal_record.get("session_id"), "status": "cancelled", "forgotten_at": self.clock()})
                 # Only managed goal documents; user artifacts are enumerated for explicit cleanup.
                 self.store.path(f"workspace/goals/{key}/GOAL.md").unlink(missing_ok=True)
-            if kind == "followup_turn" and row:
-                self.store.delete(db, "signal", row["signal_id"])
             if row and row.get("source_signal"):
                 self.store.delete(db, "signal", row["source_signal"])
             self.store.delete(db, kind, key)

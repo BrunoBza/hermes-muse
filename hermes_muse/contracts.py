@@ -3,15 +3,15 @@
 from .content_io import DomainError
 
 FIELDS = {
-    "context": "section job window cursor limit id offset length revision scope_token part",
-    "status": "section job window cursor limit id offset length revision scope_token part",
+    "context": "section job window cursor limit id offset length revision part",
+    "status": "section job window cursor limit id offset length revision part",
     "conversation_read": "session_id revision offset read_only since until descriptor",
-    "content_read": "kind id resource scope_token offset length revision cursor limit topic query part",
-    "content_write": "kind id resource scope_token body expected_revision request_id signal_id",
+    "content_read": "kind id resource offset length revision cursor limit topic query part",
+    "content_write": "kind id resource body expected_revision request_id signal_id",
     "memory_feedback_review": "receipt_id decision reason expected_revision request_id",
     "installation_prepare": "operation signal_id expected_revision request_id",
-    "goal_create": "signal_id title description completion_criteria id parent_id deadline external_ref",
-    "goal_update": "id progress status research_review_at signal_id outcome_evidence external_status_verified description completion_criteria evidence_refs",
+    "goal_create": "signal_id title description completion_criteria id parent_id deadline external_ref owner",
+    "goal_update": "id progress note status owner waiting_user blocked next_check_at expected_revision research_review_at description completion_criteria",
     "interest_record": "signal_id title id expires rationale",
     "idea_add": "title rationale goal_id sources expires",
     "feedback": "kind id action signal_id until",
@@ -26,7 +26,7 @@ FIELDS = {
     "watch_create": "goal_id signal_id schedule prompt stop_condition expires",
     "watch_stop": "job_id",
     "feed_add": "event_key title content sources why goal_id interest_id",
-    "feed_list": "query topic cursor limit scope_token",
+    "feed_list": "query topic cursor limit",
     "feed_update": "id signal_id feedback position delete title content sources",
     "calendar_window": "mode",
     "calendar_view": "window sources discovery_complete",
@@ -42,11 +42,9 @@ FIELDS = {
     "delegate": "goal_id goal tasks context output_schema images action subagent_id message",
     "research_start": "items goal_id context",
     "research_status": "id",
-    "forget": "kind object_kind id resource signal_id external_status_verified",
-    "followup_update": "binding message_id message_hash mode object_kind id repair_id cursor scope_token kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset snapshot_revision disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id",
+    "forget": "kind object_kind id resource signal_id",
 }
 CAS = {
-    "goal_update": "goal",
     "preferences": "preferences",
     "feed_update": "feed",
     "feedback": None,
@@ -58,7 +56,6 @@ CAS = {
     "forget": None,
 }
 CREATES = {
-    "goal_create",
     "interest_record",
     "idea_add",
     "notification_add",
@@ -71,7 +68,7 @@ CREATES = {
 REPLAY_ACTIONS = {'delegate', 'research_start', 'research_status', 'watch_stop',
                   'operations_read', 'operations_batch', 'operations_complete', 'operations_commit',
                   'review_complete', 'run_complete', 'notification_prepare', 'notification_queue',
-                  'notification_handoff', 'followup_update'}
+                  'notification_handoff'}
 
 
 def validate(action, data):
@@ -79,7 +76,7 @@ def validate(action, data):
         raise DomainError("invalid_argument", "Unknown action or invalid data object")
     allowed = set(FIELDS[action].split())
     if action in CAS or action in CREATES:
-        allowed |= {"expected_revision", "request_id", "scope_token"}
+        allowed |= {"expected_revision", "request_id"}
     if action in REPLAY_ACTIONS:
         allowed.add("request_id")
     unknown = set(data) - allowed
@@ -87,14 +84,6 @@ def validate(action, data):
         raise DomainError(
             "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown)[:8]) + (" (and more; all rejected)" if len(unknown) > 8 else "")
         )
-    if action == 'followup_update' and data.get('kind') == 'rebind':
-        if data.get('binding') not in {'reply', 'successor'} or not data.get('request_id') or not data.get('expected_revision'):
-            raise DomainError('invalid_argument', 'Rebind requires binding=reply/successor, request_id and current goal revision')
-    if action == 'followup_update' and data.get('kind') == 'reconcile':
-        if data.get('mode', 'dry_run') not in {'dry_run', 'apply', 'rollback'}:
-            raise DomainError('invalid_argument', 'Use dry_run/apply/rollback')
-        if data.get('mode') in {'apply', 'rollback'} and (not data.get('request_id') or not data.get('expected_revision')):
-            raise DomainError('revision_required', 'Reconciliation writes require request_id and expected_revision from dry-run')
     if action in {'context', 'status', 'review_complete'} and 'window' in data and not isinstance(data['window'], str):
         raise DomainError('invalid_argument', 'window must be text')
     if action in {'context', 'status', 'content_read'} and 'cursor' in data and not isinstance(data['cursor'], str):
@@ -107,7 +96,7 @@ def validate(action, data):
     common = {'title': 300, 'description': 8000, 'completion_criteria': 8000,
               'summary': 4000 if action == 'finding_record' else 2000,
               'reason': 2000, 'rationale': 2000, 'why': 2000, 'feedback': 2000,
-              'progress': 2000, 'next_action': 2000, 'source_quote': 2000,
+              'progress': 2000, 'note': 2000, 'next_action': 2000, 'source_quote': 2000,
               'event_key': 500, 'issue_key': 500, 'priority_reason': 2000,
               'content': 60000, 'feed_brief': 12000, 'alias_reason': 1000}
     if action == 'goal_create':
@@ -124,7 +113,7 @@ def validate(action, data):
             raise DomainError('size_limit', 'research items require 1..24 text questions of at most 2000 characters')
     if action == 'review_complete' and 'window' in data and data.get('job') not in {'memory-upkeep', 'nightly-review'}:
         raise DomainError('invalid_argument', 'window is only valid for memory-upkeep/nightly-review')
-    for name in ('window', 'revision', 'expected_revision', 'snapshot_revision', 'scope_token', 'request_id'):
+    for name in ('window', 'revision', 'expected_revision', 'snapshot_revision', 'request_id'):
         if isinstance(data.get(name), str) and len(data[name]) > (128 if name == 'request_id' else 1024):
             raise DomainError('size_limit', name + ' exceeds its token budget')
     if action in {'context', 'status', 'content_read', 'feed_list'} and isinstance(data.get('cursor'), str) and len(data['cursor']) > 2048:
@@ -135,13 +124,12 @@ def validate(action, data):
         if name in {"offset", "length", "limit", "batch"} and type(value) is not int:
             raise DomainError("invalid_argument", name + " must be an integer")
         if (
-            name in {"delete", "external_status_verified", "final_result", "read_only", "descriptor"}
+            name in {"delete", "final_result", "read_only", "descriptor"}
             and type(value) is not bool
         ):
             raise DomainError("invalid_argument", name + " must be boolean")
         if name in {
             "sources",
-            "evidence_refs",
             "blocked_topics",
             "items",
             "reviews",
@@ -152,12 +140,12 @@ def validate(action, data):
             raise DomainError("invalid_argument", name + " must be an array")
         if (
             (
-                (name.endswith("_id") and not (action == "followup_update" and data.get("kind") == "rebind" and name == "message_id"))
+                name.endswith("_id")
                 or name
                 in {
                     "id",
                     "kind",
-                    "scope_token",
+
                     "request_id",
                     "signal_id",
                     "resource",

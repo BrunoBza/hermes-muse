@@ -32,11 +32,6 @@ def object_state(views, kind, key):
         and (views.record("interest", key) or {}).get("kind") == "idea"
     ):
         return views.object("idea", key)
-    if kind == "followup_turn":
-        row = views.record("followup_turn", key)
-        if row is None:
-            raise DomainError("not_found", "Followup candidate unavailable")
-        return None, row, row["revision"]
     return views.object(kind, key)
 
 
@@ -60,7 +55,6 @@ def invoke(runtime, args, kwargs, callback):
         )
     check_cancelled()
     views = Views(runtime.home)
-    views.check_scope(data.get("scope_token"))
     session = kwargs.get("session_id", "")
     with profile_scope(runtime.home):
         run = runtime.service.runs.bind(kwargs.get("task_id"))
@@ -78,8 +72,7 @@ def invoke(runtime, args, kwargs, callback):
                 )
         owner = data.get("goal_id") or (
             data.get("id")
-            if action == "goal_update"
-            or action == "forget"
+            if action == "forget"
             and data.get("kind") == "goal"
             else None
         )
@@ -89,7 +82,7 @@ def invoke(runtime, args, kwargs, callback):
             raise DomainError(
                 "permission_denied", "Preference changes require a current user signal"
             )
-    if action in {"goal_create", "interest_record"} and not data.get("id"):
+    if action == "interest_record" and not data.get("id"):
         from .store import digest
 
         data = {**data, "id": digest(views.scope() + action + data["request_id"])[:12]}
@@ -98,8 +91,8 @@ def invoke(runtime, args, kwargs, callback):
     if action in CREATES:
         from .store import digest
 
-        if action in {"goal_create", "interest_record"}:
-            kind, key = ("goal" if action == "goal_create" else "interest"), data["id"]
+        if action == "interest_record":
+            kind, key = "interest", data["id"]
         elif action in {"feed_add", "notification_add"}:
             kind, key = (
                 ("feed" if action == "feed_add" else "notice"),
@@ -114,7 +107,7 @@ def invoke(runtime, args, kwargs, callback):
             )
     if (
         not run
-        and kind in {"notice", "feed", "interest", "idea", "followup_turn"}
+        and kind in {"notice", "feed", "interest", "idea"}
         and key
     ):
         try:
@@ -154,7 +147,6 @@ def invoke(runtime, args, kwargs, callback):
                 except DomainError:
                     observed = {}
                 if observed.get("_request_id") == journal and action in CREATES | {
-                    "goal_update",
                     "feedback",
                     "notification_refresh",
                     "notification_resolve",

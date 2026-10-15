@@ -31,7 +31,8 @@ describe('Muse in the installed Desktop SDK',()=>{
   setApiRequestProfile('default');
   const orchid=await ctx.rest('/goals/research');
   expect(orchid.metadata.title).toBe('Orchid research');
-  expect(orchid.scope_token).not.toBe(cedar.scope_token);
+  expect(orchid.metadata.title).not.toBe(cedar.metadata.title);
+  expect(orchid).not.toHaveProperty('scope_token');
   expect(calls.every(x=>x.path.startsWith('/api/plugins/hermes-muse/'))).toBe(true);
   disposers.forEach(fn=>fn());
   expect(registry.getArea(ROUTES_AREA).some(x=>x.id==='hermes-muse:page')).toBe(false);

@@ -59,6 +59,9 @@ with tempfile.TemporaryDirectory(prefix="muse-native-views-") as temporary:
                     "completion_criteria": "Synthetic fixture",
                 }
             )
+            if title == "ALPHA":
+                service.goal_create({"id": "only-alpha", "signal_id": "signal", "title": title,
+                                     "description": "Synthetic", "completion_criteria": "Profile isolation"})
             for n in range(103):
                 service.feed_add(
                     {
@@ -87,14 +90,8 @@ with tempfile.TemporaryDirectory(prefix="muse-native-views-") as temporary:
         a.json()["metadata"]["title"] == "ALPHA"
         and b.json()["metadata"]["title"] == "BETA"
     )
-    assert (
-        client.get(
-            prefix + "/goals/same-id",
-            params={"profile": "beta", "scope_token": a.json()["scope_token"]},
-            headers=headers,
-        ).status_code
-        == 403
-    )
+    assert 'scope_token' not in a.json() and 'scope_token' not in b.json()
+    assert client.get(prefix+'/goals/only-alpha',params={'profile':'beta'},headers=headers).status_code==404
     ids = []
     cursor = None
     while True:

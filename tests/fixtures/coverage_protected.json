@@ -1,6 +1,5 @@
 {
   "prompts/proactive-watch.md|Do not start a recurring watch": "1559b7f0155c99d3b925ac65bf6d80781326d7453ece6759c2bbbd7f9c1b8ae1",
-  "prompts/proactive-watch.md|Read the pre-run Script Output": "3d3e2d763a2a9e2404b641df12aa01ab292259fa5ca972802e7dfb5e662b63a7",
   "prompts/nightly-review.md|Then synthesize the complete snapshot": "bc415ea48cd349edfc4ec8fdfa08e7b005e4c5bb6479cce795f850708970088b",
   "prompts/memory-upkeep.md|After saving useful memory/relationship changes": "7d628d5cdfe8f3d559246b04dce4a98117cc685b3fd900b1a9b624694f29a54b"
 }

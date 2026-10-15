@@ -256,15 +256,23 @@ class MemoryFeedback:
             )
             return result
 
-    def finish(self, session_id, turn_id, response=""):
-        replies = [
-            r
-            for r in self.store.all("followup_reply")
-            if r.get("session_id") == session_id
-            and r.get("turn_id") == turn_id
-            and r.get("message_id")
-        ]
-        if len(replies) != 1:
+    def finish(self, session_id, turn_id, response="", history=()):
+        # Use the real current final reply directly; no followup reply ledger.
+        signal = self.store.read('signal', turn_id, {})
+        if signal.get('session_id') != session_id:
+            return
+        import sqlite3
+        path = self.store.home / 'state.db'
+        if not path.is_file() or path.is_symlink():
+            return
+        try:
+            with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
+                row = db.execute("SELECT id,content FROM messages WHERE session_id=? AND role='assistant' AND timestamp>=? AND (tool_calls IS NULL OR tool_calls='[]') AND (display_kind IS NULL OR display_kind!='hidden') ORDER BY id DESC LIMIT 1", (session_id, signal['created'])).fetchone()
+            if not row or response and response != row[1]:
+                return
+            response = row[1]
+            row_id = row[0]
+        except sqlite3.Error:
             return
         with self.store.transaction() as db:
             for row in self.store.rows(db, "memory_feedback"):
@@ -293,7 +301,7 @@ class MemoryFeedback:
                     ):
                         matched = False
                     row.update(
-                        reply_ref=replies[0]["id"],
+                        reply_ref={'session_id': session_id, 'message_id': row_id},
                         reply_state="recorded_unconfirmed"
                         if matched
                         else "content_unverified",

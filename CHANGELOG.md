@@ -1,3 +1,9 @@
+# 0.3.0 — simple goals (unreleased)
+
+- Replace execution/result/delivery followup state machines with active/done/cancelled goals, optional owner handles, short due summaries and one optional integer write revision.
+- Remove followup rebind/reconcile/repair, orphan receipts, reply-hash handoff checks, newer-input freezes, signal age gates and caller scope tokens.
+- Archive original 0.2.x goals/records in a one-time migration with guarded offline rollback. Preserve profile/child/Cron boundaries, notification delivery and unknown-write safety.
+
 # 0.2.4 — historical followup rebinding (2026-10-15)
 
 - Enforce exclusive successor ownership from existing goals, retain delivery evidence by rejecting conflicting rebinds, and require strictly later receipt/result timestamps.

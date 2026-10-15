@@ -69,7 +69,7 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
       const captured = identity, token = ++generation.current;
       setBusy(true); setError('');
       try {
-        const params = new URLSearchParams({scope_token: item.scope_token});
+        const params = new URLSearchParams();
         if (continuation) { params.set('offset', article.next_offset); params.set('revision', article.revision); }
         const value = await request('/' + tab + '/' + encodeURIComponent(item.id) + '?' + params, scope);
         if (generation.current !== token || active.current !== captured || !scope.current()) return;
@@ -80,7 +80,6 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
     const currentPage = page?.identity === identity ? page : null;
     const currentArticle = article?.identity === identity ? article : null;
     const button = (label, onClick, disabled=false) => h('button', {type:'button', onClick, disabled, style:{padding:'10px 14px',border:'1px solid currentColor',borderRadius:8,background:'transparent',color:'inherit',cursor:disabled?'default':'pointer'}}, label);
-    const fu = currentArticle?.metadata?.followup;
     return h('main', {style:{maxWidth:960,margin:'0 auto',padding:'clamp(16px,4vw,32px)',fontFamily:'inherit',lineHeight:1.6,overflowWrap:'anywhere'}},
       h('h1', null, 'Muse'), h('p', null, scope.label),
       profileAdmin && h('section',{'aria-label':'Muse profiles',style:{padding:'16px 0'}},
@@ -102,7 +101,8 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
       error && h('p', {role:'alert'},error), busy && h('p', {role:'status'},'Loading…'),
       currentArticle ? h('article', null, button('Back to list',()=>setArticle(null)),
         h('h2',null,currentArticle.metadata?.title || currentArticle.id),
-        fu && h('dl',null,...[['Execution owner',fu.owner ? JSON.stringify(fu.owner) : 'Unknown'],['Execution',currentArticle.metadata.status==='cancelled' && fu.owner ? 'Tracking cancelled; owner cancellation not confirmed' : fu.execution_state],['Verification',fu.result_state],['Delivery',fu.delivery_state],['Delivery evidence',fu.delivery_basis ? JSON.stringify(fu.delivery_basis) : 'No confirmed evidence']].flatMap(([k,v])=>[h('dt',{key:k},k),h('dd',{key:k+'-v'},v)])),
+        currentArticle?.kind==='goal' && h('p',null,'Status: '+currentArticle.metadata.status+' · Owner: '+(currentArticle.metadata.owner ? JSON.stringify(currentArticle.metadata.owner) : 'unassigned')),
+
         h('div',{style:{whiteSpace:'pre-wrap'}},currentArticle.body),
         currentArticle.next_offset != null && button('Continue article',()=>open(currentArticle,true),busy),
         draft && button(tab==='goals'?'Discuss or change this goal':'Give feedback in chat',()=>draft(currentArticle,scope),busy),
@@ -144,7 +144,7 @@ export default {
    if (!sid || !stored || !owner || owner.profile!==scope.profile || owner.connectionId!==scope.connection || (original && stored!==original)) {
     host.notify({kind:'info',message:'Select the original chat in this connection and profile, then try again.'}); return;
    }
-   const ok=await host.composer.insertText(sid,'Please '+intent+' this Muse '+(item.kind || 'item')+' '+item.id+' (scope '+item.scope_token+'). Read its current state before changing anything.');
+   const ok=await host.composer.insertText(sid,'Please '+intent+' this Muse '+(item.kind || 'item')+' '+item.id+'. Read its current state before changing anything.');
    if (!ok) host.notify({kind:'info',message:'Open the selected chat composer and try again.'});
   }
   const Page=makeMusePage(React,useScope,request,draft);

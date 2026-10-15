@@ -62,8 +62,8 @@ def run(home):
             watch={'goal_id':'fixture-goal','signal_id':'user-one','prompt':'Read the authorized fixture','stop_condition':'When the verified fixture is complete'}
             refused=call('watch_create',watch,ok=False,task=task)
             assert 'allow_agent_scheduling' in refused['error'] and len(list_jobs(include_disabled=True))==6
-            # Local goal registration still creates no job even in Cron.
-            call('goal_create',{'id':'recovered','title':'Recovered original scope','signal_id':'user-one','description':'No scheduling','completion_criteria':'Verified synthetic result'},task=task)
+            # Cron cannot create parent goals; existing non-goal scheduling behavior is unchanged.
+            call('goal_create',{'id':'recovered','title':'Recovered original scope','signal_id':'user-one','description':'No scheduling','completion_criteria':'Verified synthetic result'},task=task,ok=False)
             assert len(list_jobs(include_disabled=True))==6
             config=copy.deepcopy(load_config_readonly());config['cron']={'allow_agent_scheduling':True}
             with patch('hermes_cli.config.load_config_readonly',return_value=config):

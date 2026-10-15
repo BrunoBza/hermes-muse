@@ -184,5 +184,5 @@ def read_page(home, data, now):
     if data.get("offset", 0) and not data.get("revision"):
         raise DomainError("revision_required", "History continuation requires the first page revision")
     result = page(None, state, {**data, "revision": data.get("revision", state["revision"])}, now, record_coverage=False)
-    return {**result, "scope_token": Views(home).scope(), "since": since, "until": until,
+    return {**result, "since": since, "until": until,
             "instruction": "Pure evidence read; no notice coverage or audit checkpoint recorded. Continue with revision, since, until and next_offset."}

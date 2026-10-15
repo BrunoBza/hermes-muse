@@ -41,12 +41,12 @@ def worker(home):
         for i in range(400):
             rt.store.put(db,'source_check',f'source-{i}',{'id':f'source-{i}','status':'partial','summary':'x'*6000})
     overview=call('context');assert 'signal_reviews' in overview and 'source_checks' not in overview
-    state=call('status');assert state['scope_token']==overview['scope_token']
+    state=call('status');assert state['sections']==overview['sections']
     first=call('context',{'section':'source_check','limit':100});ids=[r['id'] for r in first['items']]
     while first['next_cursor']:
         first=call('context',{'section':'source_check','limit':100,'cursor':first['next_cursor']});ids.extend(r['id'] for r in first['items'])
     assert len(ids)==len(set(ids))==400
-    assert call('context',{'section':'feed','scope_token':'foreign'},ok=False)['code']=='profile_mismatch'
+    assert call('context',{'section':'feed','home':'foreign'},ok=False)['code']=='invalid_argument'
     with delegated_child_context('native-reader'):
         assert call('context',{'section':'source_check','limit':3})['total']==400
         assert not call('context',{'section':'signals','job':'memory-upkeep'},ok=False)['ok']
@@ -108,18 +108,23 @@ def worker(home):
     finding=call('finding_record',{'expected_revision':'absent','request_id':'finding-create','evidence':[ref],
                     'summary':'Synthetic fixture finding','impact':'Fixture only'},task=task)
     assert call('content_read',{'kind':'finding','id':finding['id']})['metadata']['id']==finding['id']
-    # Genuine unknown orphan receipts beyond due/turn totals must all be pageable.
-    with rt.store.transaction() as db:
-        for i in range(160):rt.store.put(db,'followup_receipt',f'orphan-{i}',{'id':f'orphan-{i}','intent_id':None,'session_id':'origin','observed_at':now,'native_status':'unknown'})
-    due=call('followup_update',{'kind':'due','offset':0});orphans=due['orphan_receipts'][:]
-    while due['next_offset'] is not None:
-        due=call('followup_update',{'kind':'due','offset':due['next_offset'],'snapshot_revision':due['snapshot_revision']});orphans+=due['orphan_receipts']
-    assert len({r['id'] for r in orphans})==160
-    assert all(r['native_status']=='unknown' for r in orphans)
-    old=call('followup_update',{'kind':'due','offset':0})
-    rt.store.write('followup_receipt','late',{'id':'late','intent_id':None,'session_id':'origin','observed_at':now,'native_status':'unknown'})
-    assert call('followup_update',{'kind':'due','offset':old['next_offset'],'snapshot_revision':old['snapshot_revision']},ok=False)['code']=='revision_conflict'
-    print(json.dumps({'native_large_context':'PASS','signals':552,'native_truncated_signal_full_body':True,'source_checks':400,'orphan_pages':32,'real_registry_hooks':True,'child_write_denied':True,'scope_mismatch_denied':True,'append_only_history_progress':True,'feed_correction_CAS_replay':True,'finding_absent_creation':True,'notification_partial_then_reviewed':True,'oversized_mutation_receipt':'reference, replay preserved','provider_calls':0,'external_sends':0}))
+    # Live goal-ID pages remain consumable while the parent closes reviewed work.
+    for i in range(60):
+        call('goal_create',{'id':f'goal-{i:03}','title':'Fixture','description':'Synthetic work','completion_criteria':'Explain result'})
+        call('goal_update',{'id':f'goal-{i:03}','next_check_at':now-1})
+    seen=[];cursor=''
+    while True:
+        due=call('context',{'section':'followups','cursor':cursor,'limit':7})
+        with delegated_child_context('native-reader'):
+            assert call('context',{'section':'followups','cursor':cursor,'limit':7})['items']==due['items']
+        for item in due['items']:
+            seen.append(item['id'])
+            call('goal_update',{'id':item['id'],'status':'done','note':'Fixture checked and explained'})
+        if not due['next_cursor']:break
+        cursor=due['next_cursor']
+    assert len(seen)==len(set(seen))==60
+    assert call('context',{'section':'followups'})['due_total']==0
+    print(json.dumps({'native_large_context':'PASS','signals':552,'native_truncated_signal_full_body':True,'source_checks':400,'due_goals_read_and_done':60,'real_registry_hooks':True,'child_write_denied':True,'caller_home_rejected':True,'append_only_history_progress':True,'feed_correction_CAS_replay':True,'finding_absent_creation':True,'notification_partial_then_reviewed':True,'oversized_mutation_receipt':'reference, replay preserved','provider_calls':0,'external_sends':0}))
     native.close();rt.close()
 
 

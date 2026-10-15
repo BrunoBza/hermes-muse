@@ -89,8 +89,8 @@ with patch('agent.subagent_lifecycle.get_active_subagent_parent',return_value=pa
     assert raw_call('delegate',error_data)==error and len(calls)==1
     denied=raw_call('content_read',error['error_ref']['data'],session='other')
     assert not denied['ok'] and denied['code']=='permission_denied'
-    denied=raw_call('content_read',{**error['error_ref']['data'],'scope_token':'foreign'})
-    assert not denied['ok'] and denied['code']=='profile_mismatch'
+    denied=raw_call('content_read',{**error['error_ref']['data'],'home':'foreign'})
+    assert not denied['ok'] and denied['code']=='invalid_argument'
     native_result={'status':'completed','results':[{'status':'completed','result':'x'*300000}]}
     data={'goal':'Synthetic','request_id':'success-replay'}
     result=raw_call('delegate',data)

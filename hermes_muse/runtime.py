@@ -16,10 +16,10 @@ from .store import Store, is_background_message
 from .followup import context as followup_context
 
 log = logging.getLogger(__name__)
-ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
+ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. followup_update(kind=reconcile,mode=dry_run) diagnoses historical evidence in bounded pages; apply/rollback require request_id and expected_revision. followup_update(kind=rebind,binding=reply/successor) is originating-parent-only historical evidence binding with CAS/request_id and repair rollback. Never invent a signal ID, delivery receipt or authorization.",
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. Goals use active/done/cancelled; after telling the user, goal_update(status=done,note=...). Optional expected_revision is one integer; no request_id or scope token is needed for goals. Read due goals and owner status with context(section=followups). Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -52,7 +52,6 @@ class Runtime:
         self.timers = {}
         self.delivery_turns = {}
         self.run_turns = {}
-        self.followup_contexts = {}
         self.lock = threading.RLock()
         self.closed = False
 
@@ -70,22 +69,7 @@ class Runtime:
             if private_session(session_info()) and not is_delegated_child_context() and args['action'] not in reads:
                 ARCHIVE.set(lambda envelope: archive(self.store, kwargs.get('session_id', ''), args['action'], envelope))
             from .mutations import invoke
-            if args['action'] == 'followup_update' and args.get('data', {}).get('kind') == 'rebind':
-                info = session_info()
-                if (is_delegated_child_context() or not kwargs.get('session_id') or info['cron']
-                        or info.get('platform') in {'cron', 'delegate', 'subagent', 'webhook', 'kanban'} or kwargs.get('task_id')):
-                    from .content_io import DomainError
-                    raise DomainError('permission_denied', 'Historical binding requires the originating private parent, never Cron/child')
-            if args['action'] == 'followup_update' and args.get('data', {}).get('kind') == 'reconcile' and args['data'].get('mode') == 'rollback':
-                from .views import Views
-                repair = Views(self.home).record('followup_repair', args['data'].get('repair_id')) or {}
-                if repair.get('parent_session') and (kwargs.get('session_id') != repair['parent_session'] or session_info()['cron'] or kwargs.get('task_id') or is_delegated_child_context()):
-                    from .content_io import DomainError
-                    raise DomainError('permission_denied', 'Historical binding rollback is originating-parent-only')
-            diagnostic = args["action"] == "followup_update" and args.get("data", {}).get("kind") == "reconcile" and args.get("data", {}).get("mode", "dry_run") == "dry_run"
-            if diagnostic:
-                ARCHIVE.set(None)
-            raw = self._handle(args, **kwargs) if diagnostic else invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
+            raw = invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
             return self._receipt(json.loads(raw), action=args['action'], data=args.get('data', {}))
         except Exception as exc:
             return self._error(exc)
@@ -132,13 +116,16 @@ class Runtime:
             validate(action, data)
             from .contracts import CAS, CREATES, REPLAY_ACTIONS
             if (action in CAS or action in CREATES) and not (action == "forget" and data.get("kind") == "content"):
-                data = {k:v for k,v in data.items() if k not in {"expected_revision", "request_id", "scope_token"}}
+                data = {k:v for k,v in data.items() if k not in {"expected_revision", "request_id"}}
             if action in REPLAY_ACTIONS:
                 data = {k: v for k, v in data.items() if k != "request_id"}
             if action not in ACTIONS:
                 raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
             delegated = is_delegated_child_context()
+            goal_write = action in {'goal_create', 'goal_update'} or action == 'forget' and data.get('kind') == 'goal'
+            if goal_write and (delegated or info['cron'] or info.get('platform') in {'cron', 'delegate', 'subagent'} or not kwargs.get('session_id')):
+                raise DomainError('permission_denied', 'Only a private parent conversation can change goals')
             # Children inherit the native profile/user scope. Reading needs no
             # plugin grant service; global writes and lifecycle refresh stay parent-owned.
             child_reads = {"context", "status", "content_read", "feed_list", "operations_evidence",
@@ -147,31 +134,17 @@ class Runtime:
                 raise DomainError("permission_denied", "Child tasks may read current-profile evidence; state changes and checkpoints belong to the parent")
             if delegated and action in {"context", "status"}:
                 view = Views(self.home)
-                view.check_scope(data.get('scope_token'))
                 from .context_pages import COLLECTIONS
                 section = data.get('section', 'overview')
+                if section == 'followups':
+                    from .followup import snapshot
+                    return self._response(snapshot(self.home, now=self.service.clock(), cursor=data.get('cursor', ''), limit=data.get('limit', 25)))
                 if section in COLLECTIONS:
                     return self._response(view.read({'kind': section, **{k:v for k,v in data.items() if k not in {'section','job','window'}}}))
                 if section != 'overview':
                     raise DomainError('permission_denied', 'Review windows and coverage belong to the parent; use conversation_read(read_only=true) for child history')
-                return self._response({'scope_token': view.scope(), 'read_semantics': 'pure read; parent owns review windows/checkpoints',
+                return self._response({'read_semantics': 'pure read; parent owns review windows/checkpoints',
                     'sections': {kind: {'action':'content_read','data':{'kind':kind,'limit':25}} for kind in COLLECTIONS}})
-            if action == "followup_update" and data.get("kind") == "rebind":
-                from .followup_recovery import rebind
-                if info['cron'] or info.get('platform') in {'cron', 'delegate', 'subagent', 'webhook', 'kanban'} or kwargs.get('task_id'):
-                    raise DomainError('permission_denied', 'Historical binding requires the originating private parent, never Cron')
-                return self._response(rebind(self.service.followups, data, self.service.clock(),
-                    session_id=kwargs.get('session_id', ''), turn_id=kwargs.get('turn_id', '')))
-            if action == "followup_update" and data.get("kind") == "reconcile":
-                from .followup_recovery import diagnose, apply
-                if data.get('mode') == 'rollback' and kwargs.get('task_id'):
-                    repair = self.store.read('followup_repair', data.get('repair_id')) or {}
-                    if repair.get('parent_session'):
-                        raise DomainError('permission_denied', 'Historical binding rollback is parent-only')
-                origin = {k: kwargs.get(k, "") for k in ("session_id", "turn_id")}
-                result = (diagnose(self.home, data, self.service.clock(), **origin) if data.get("mode", "dry_run") == "dry_run"
-                          else apply(self.service.followups, data, self.service.clock(), **origin))
-                return self._response(result)
             if action == "operations_evidence":
                 return self._response(self.service.operations.evidence(data))
             if action == "conversation_read" and (delegated or data.get("read_only")):
@@ -197,6 +170,8 @@ class Runtime:
             with profile_scope(self.home):
                 self.service.operations.track(kwargs.get("session_id"), kwargs.get("task_id"))
                 run = self.service.runs.bind(kwargs.get("task_id"))
+                if (action == 'content_write' or action == 'forget' and data.get('kind') == 'content') and not run and (info['cron'] or info.get('platform') in {'cron', 'delegate', 'subagent'}):
+                    raise DomainError('permission_denied', 'Background content writes require their own native maintenance run')
                 if run and kwargs.get("session_id"):
                     with self.lock:
                         self.run_turns[kwargs["session_id"]] = run
@@ -215,21 +190,16 @@ class Runtime:
                 elif action == "installation_prepare":
                     from .installation import prepare
                     result = prepare(self, data, kwargs.get("session_id", ""), kwargs.get("turn_id", ""))
-                elif action == "goal_update" and data.get("status") == "completed":
-                    if not data.get("evidence_refs"):
-                        raise ValueError("Completion requires structured evidence_refs for the accepted result or explicit user confirmation")
+                elif action == 'goal_create':
+                    result = self.service.goal_create(data, session_id=kwargs.get('session_id', ''))
+                elif action == 'goal_update':
                     result = self.service.goal_update(data)
-                elif action == "followup_update":
-                    result = self.service.followups.update(data, session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""))
                 elif action in {"context", "status"}:
                     self.host.reconcile()
                     parts = str(kwargs.get("task_id") or "").split(":", 2)
                     view = None
                     if len(parts) == 3 and parts[0] == "cron":
                         view = self.host.manifest()["jobs"].get(parts[1], {}).get("key")
-                    if view and data.get("section", "overview") == "overview":
-                        from .followup_recovery import automatic
-                        automatic(self.service.followups, None, self.service.clock())
                     from .context_pages import context
                     result = context(self.service, data, view=view)
                     if data.get('section', 'overview') == 'overview':
@@ -290,12 +260,12 @@ class Runtime:
                     from .delegation import dispatch, validate
                     request = {k: v for k, v in data.items() if k != "goal_id"}
                     validate(request, owned_cron=bool(run or delivery))
-                    result = self.service.followups.dispatch(data.get("goal_id"),
-                        lambda req: Audit(self.service.operations).dispatch(req, lambda: dispatch(self.ctx, req, owned_cron=bool(run or delivery)), session_id=kwargs.get("session_id", ""), tool_call_id=kwargs.get("tool_call_id")), request,
-                        session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""), tool_call_id=kwargs.get("tool_call_id"))
+                    result = Audit(self.service.operations).dispatch(request,
+                        lambda: dispatch(self.ctx, request, owned_cron=bool(run or delivery)),
+                        session_id=kwargs.get('session_id', ''), tool_call_id=kwargs.get('tool_call_id'))
                 elif action in {"research_start", "research_status"}:
                     from .research import start, poll
-                    result = (start(self.store, self.ctx, data, owned_cron=bool(run or delivery), followups=self.service.followups,
+                    result = (start(self.store, self.ctx, data, owned_cron=bool(run or delivery),
                                     session_id=kwargs.get("session_id", ""), turn_id=kwargs.get("turn_id", ""), tool_call_id=kwargs.get("tool_call_id"))
                               if action == "research_start" else poll(self.store, self.ctx, data))
                 elif action in {"notification_prepare", "notification_queue", "notification_handoff"}:
@@ -333,7 +303,7 @@ class Runtime:
                     'findings_ref': {'action': 'content_read', 'data': {'kind': 'finding', 'limit': 25}},
                     'instruction': 'Allocation is saved, not reviewed. Page the native evidence index and expand every ref before operations_complete; no transcript copy is stored here.'}})
             from .contracts import CAS
-            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation', 'research_start': 'research',
+            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'goal_update': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation', 'research_start': 'research',
                      'notification_prepare': 'notice', 'notification_queue': 'notice', 'notification_handoff': 'notice'}
             kind = kinds.get(action)
             if action == 'feedback':
@@ -342,8 +312,6 @@ class Runtime:
             key = record.get('id') if isinstance(record, dict) else None
             if action in {'preferences', 'installation_prepare'}:
                 key = 'current'
-            if action == 'followup_update' and (data or {}).get('goal_id'):
-                kind, key = 'goal', data['goal_id']
             if envelope.get("ok") and kind and key:
                 bounded = {'id': key, 'result_is_reference': True,
                     'content_ref': {'action': 'content_read', 'data': {'kind': kind, 'id': key}},
@@ -392,17 +360,13 @@ class Runtime:
                         self.run_turns[session_id] = run
                     self.service.operations.track(session_id, kwargs.get("task_id"))
         text = user_message if isinstance(user_message, str) else json.dumps(user_message, ensure_ascii=False)
-        match = re.match(r"^\[ASYNC DELEGATION (?:BATCH COMPLETE|COMPLETE|TASK FAILED) — ([A-Za-z0-9_-]+)(?:, task [0-9]+/[0-9]+)?\]", text.lstrip())
         from agent.delegation_context import is_delegated_child_context
-        if match and not self.closed and not parent_session_id and not is_delegated_child_context() and private_session(info):
-            from .followup_recovery import automatic
-            automatic(self.service.followups, session_id, self.service.clock(), owner_id=match[1])
         if self.closed or parent_session_id or info["cron"] or platform in {"cron", "delegate", "subagent", "webhook", "msgraph_webhook", "kanban"} or not private_session(info):
             return None
         if text.lstrip().startswith(('[Cronjob "', "[Hermes Muse notification ", MARKER)):
             return {"context": receiving_instructions()}
         if is_background_message(text):
-            value = self._followup_context(session_id, turn_id, callback_owner=match[1] if match else None)
+            value = self._followup_context(session_id, turn_id)
             return {"context": value + "\nBackground process completion is intermediate evidence. Report only blockers, changed direction or verified results; do not infer goal completion."} if value else None
         if not session_id or not turn_id or not text.strip():
             return None
@@ -411,37 +375,25 @@ class Runtime:
             if timer:
                 timer.cancel()
         self.service.signal(turn_id, session_id, text, route_from(info))
-        return {"context": f"[Hermes Muse state pointer] This real user turn has signal_id={turn_id}. For goals, interests, feedback, reminders or Feed, load hermes-muse:companion and use muse_manage. When accepting or changing work, read its communication procedure: think through the outcome and practical consequences, persist the plan, verify actions and explain the useful judgment in the user's own conversational style. Read current state before using old memories as an active goal. This pointer does not authorize extra tasks.\n" + self._followup_context(session_id, turn_id, exclude_turn=turn_id) + self.memory_feedback.context(session_id)}
+        return {"context": f"[Muse] User signal: {turn_id}. Use muse_manage for accepted goals and preferences.\n" + self._followup_context(session_id, turn_id) + self.memory_feedback.context(session_id)}
 
-    def _followup_context(self, session_id, turn_id, **kwargs):
-        with self.lock:
-            cached = self.followup_contexts.get(session_id)
-            if cached and cached[0] == turn_id:
-                return cached[1]
-            value = followup_context(self.home, now=self.service.clock(), session_id=session_id, **kwargs)
-            self.followup_contexts[session_id] = (turn_id, value)
-            return value
-
-    def pre_tool(self, tool_name="", args=None, **kwargs):
-        from agent.delegation_context import is_delegated_child_context
-        if self.closed or is_delegated_child_context() or not private_session(session_info()):
-            return None
-        with profile_scope(self.home):
-            return self.service.followups.pre_tool(tool_name, args or {}, **kwargs)
+    def _followup_context(self, session_id, turn_id):
+        try:
+            return followup_context(self.home, now=self.service.clock(), session_id=session_id)
+        except (OSError, ValueError):
+            return '[Muse] Goal data needs inspection; no automatic action was taken.'
 
     def post_tool(self, tool_name="", args=None, result=None, **kwargs):
         from agent.delegation_context import is_delegated_child_context
         if self.closed or is_delegated_child_context() or not private_session(session_info()):
             return None
         with profile_scope(self.home):
-            self.service.followups.receipt(tool_name, args or {}, result, **kwargs)
             self.memory_feedback.capture(tool_name, args or {}, result, **kwargs)
 
     def post_turn(self, session_id="", turn_id="", **kwargs):
         if self.closed:
             return
-        self.service.followups.finish_turn(session_id, turn_id, response=kwargs.get("assistant_response"), history=kwargs.get("conversation_history", ()))
-        self.memory_feedback.finish(session_id, turn_id, kwargs.get("assistant_response") or "")
+        self.memory_feedback.finish(session_id, turn_id, kwargs.get("assistant_response") or "", kwargs.get("conversation_history", ()))
         if private_session(session_info()):
             self.service.operations.track(session_id, kwargs.get("task_id"))
         session = self.store.read("session", session_id)
@@ -486,11 +438,9 @@ class Runtime:
     def end_turn(self, session_id="", turn_id="", **kwargs):
         if self.closed:
             return
-        self.service.followups.finish_turn(session_id, turn_id, **kwargs)
         from agent.delegation_context import is_delegated_child_context
-        if private_session(session_info()) and not is_delegated_child_context():
-            from .followup_recovery import automatic
-            automatic(self.service.followups, session_id, self.service.clock())
+        if private_session(session_info()) and not is_delegated_child_context() and not session_info()['cron']:
+            self.memory_feedback.finish(session_id, turn_id)
         with self.lock:
             self.delivery_turns.pop(session_id, None)
             self.run_turns.pop(session_id, None)
@@ -509,7 +459,6 @@ class Runtime:
             self.timers.clear()
             self.delivery_turns.clear()
             self.run_turns.clear()
-            self.followup_contexts.clear()
 
 
 def register(ctx, *, plugin_root=ROOT):
@@ -523,7 +472,6 @@ def register(ctx, *, plugin_root=ROOT):
     ctx.register_skill("companion", runtime.host.root / "skills/companion/SKILL.md", description="Calendar views, goals, memory upkeep, proactive reminders, reflection, Feed and research lifecycle")
     ctx.register_system_prompt_section("hermes-muse.companion", prompt, position="after_memory", max_chars=4000)
     ctx.register_tool(name="muse_manage", toolset="muse", schema=SCHEMA, handler=runtime.handle)
-    ctx.register_hook("pre_tool_call", runtime.pre_tool)
     ctx.register_hook("post_tool_call", runtime.post_tool)
     ctx.register_hook("on_skill_lifecycle", runtime.memory_feedback.lifecycle)
     ctx.register_hook("pre_llm_call", runtime.pre_turn)

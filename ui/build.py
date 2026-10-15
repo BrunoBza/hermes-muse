@@ -52,7 +52,7 @@ export default {
    if (!sid || !stored || !owner || owner.profile!==scope.profile || owner.connectionId!==scope.connection || (original && stored!==original)) {
     host.notify({kind:'info',message:'Select the original chat in this connection and profile, then try again.'}); return;
    }
-   const ok=await host.composer.insertText(sid,'Please '+intent+' this Muse '+(item.kind || 'item')+' '+item.id+' (scope '+item.scope_token+'). Read its current state before changing anything.');
+   const ok=await host.composer.insertText(sid,'Please '+intent+' this Muse '+(item.kind || 'item')+' '+item.id+'. Read its current state before changing anything.');
    if (!ok) host.notify({kind:'info',message:'Open the selected chat composer and try again.'});
   }
   const Page=makeMusePage(React,useScope,request,draft);

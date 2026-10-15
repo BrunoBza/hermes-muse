@@ -37,7 +37,7 @@ class CoverageScopeTests(unittest.TestCase):
         self.assertIn('even without goals', text)
         self.assertIn('full default coverage', text)
 
-    def test_delivery_followup_and_review_paragraphs_unchanged(self):
+    def test_delivery_and_review_paragraphs_unchanged(self):
         expected = json.loads((ROOT/'tests/fixtures/coverage_protected.json').read_text())
         for key, fingerprint in expected.items():
             name, start = key.split('|', 1)

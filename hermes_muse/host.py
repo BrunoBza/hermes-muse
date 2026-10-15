@@ -109,6 +109,8 @@ class HermesHost:
         if not callable(getattr(PluginContext, "register_system_prompt_section", None)):
             raise RuntimeError("Hermes lacks register_system_prompt_section; update Hermes")
         with file_lock(self.store.path("install.lock")):
+            from .migration import migrate
+            migrate(self.store)
             record = self.manifest()
             self.save_manifest(record)  # identity is durable before any external job creation
             # Only a byte-identical shipped default is migrated; custom preferences survive.
@@ -316,9 +318,6 @@ class HermesHost:
                 if current and current["status"] == row_before_status:
                     self.store.put(db, "notification", row["id"], row)
             updates.append(row)
-        from .delivery import apply_notice
-        for evidence in self.store.all("notification"):
-            apply_notice(self.store, evidence, time.time())
         return updates
 
     def bot_delivery_status(self, job_id, execution_id=None):
@@ -416,7 +415,5 @@ def cron_run(home, key):
             return {"wakeAgent": False}
     # Fixed jobs must inspect live sources/memory before deciding there is no work.
     # Only owned watches retain their explicit lifecycle gate above.
-    from .followup import snapshot
     return {"wakeAgent": key in JOBS, "job": key, "started_at": stamp(),
-            "followups": snapshot(home) if key in {"proactive-watch", "memory-upkeep", "nightly-review"} else None,
             "instruction": "Call muse_manage context, inspect current sources using this job's Skill, then decide whether there is useful work. No worthwhile notification means [SILENT], not a skipped check."}

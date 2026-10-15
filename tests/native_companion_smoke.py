@@ -51,10 +51,11 @@ def run(home):
             assert call("status")["reviews"][review]["summary"].startswith("Evidence limited")
         assert not runtime.store.all("signal") and not runtime.store.all("notification")
         runtime.service.signal("user-choice", "source-session", "Track bicycles until I choose one.")
+        parent_tokens = set_session_vars(session_id='source-session', chat_type='private', cron_session='')
+        call('goal_create', id='bicycle', title='Choose a bicycle', description='Compare options', completion_criteria='User confirms a purchase', signal_id='user-choice')
+        clear_session_vars(parent_tokens)
         tokens = set_session_vars(session_id="cron-session", chat_type="private", cron_session="1")
         try:
-            call("goal_create", id="bicycle", title="Choose a bicycle", description="Compare options",
-                 completion_criteria="User confirms a purchase", signal_id="user-choice")
             interest = call("interest_record", id="cycling", title="Cycling", signal_id="user-choice")
             runtime.service.signal("new-user-choice", "source-session", "I am still interested in cycling.")
             renewed = call("interest_record", id="cycling", title="Cycling", signal_id="new-user-choice")
@@ -67,8 +68,6 @@ def run(home):
             assert not repeated["ok"], "Rereading a signal must not renew an interest"
             call("preferences", ordinary_per_day=2)
             assert runtime.service.preferences()["ordinary_per_day"] == 2
-            call("goal_update", id="bicycle", progress="Saved research evidence.",
-                 research_review_at=stamp(now + 10 * 86400), signal_id="new-user-choice")
             idea = call("idea_add", goal_id="bicycle", title="Compare nearby shops", rationale="Relevant")
             call("feedback", kind="interest", id=idea["id"], action="dismiss", signal_id="new-user-choice")
             article = call("feed_add", event_key="article", title="Bicycles", content="Evidence",
@@ -201,10 +200,10 @@ def run(home):
         finally:
             clear_session_vars(tokens)
 
-        tokens = set_session_vars(session_id="cron-session", chat_type="private", cron_session="1")
+        tokens = set_session_vars(session_id="source-session", chat_type="private", cron_session="")
         try:
             runtime.service.signal("completed-choice", "source-session", "I confirm bicycle is completed")
-            call("goal_update", id="bicycle", status="completed", signal_id="completed-choice", evidence_refs=[{"kind":"user_report","signal_id":"completed-choice","quote":"I confirm bicycle is completed"}])
+            call("goal_update", id="bicycle", status="done", note="Result checked and told to user")
             assert not get_job(owned["id"])["enabled"]
         finally:
             clear_session_vars(tokens)

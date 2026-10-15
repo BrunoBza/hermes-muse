@@ -374,32 +374,22 @@ class CompanionTests(unittest.TestCase):
         self.assertEqual(current["expires"], interest["expires"])
         self.assertEqual(current["status"], "active")
 
-    def test_accepted_goal_can_complete_days_later_with_actual_evidence(self):
+    def test_accepted_goal_can_complete_days_later_after_telling_user(self):
         self.goal()
         self.now += 3 * DAY
         with self.assertRaises(ValueError):
-            self.service.goal_update({"id": "bicycle", "status": "completed"})
-        result = self.service.goal_update({"id": "bicycle", "status": "completed",
-            "outcome_evidence": {"verified_at": self.now, "sources": ["source://confirmed-outcome"], "summary": "Verified accepted completion criteria"}})
-        self.assertEqual(result["status"], "completed")
-        self.assertEqual(self.host.paused, ["bicycle"])
-        with self.assertRaises(ValueError):
-            self.service.goal_update({"id": "bicycle", "status": "active", "outcome_evidence": result["outcome_evidence"]})
+            self.service.goal_update({'id':'bicycle','status':'done'})
+        result=self.service.goal_update({'id':'bicycle','status':'done','note':'Result checked and explained to the user'})
+        self.assertEqual(result['status'],'done')
+        self.assertEqual(self.host.paused,['bicycle'])
 
-    def test_external_cancellation_requires_current_user_authority_without_claiming_owner_stopped(self):
-        self.goal(external_ref="calendar://event")
+    def test_cancellation_stops_tracking_without_claiming_external_owner_stopped(self):
+        self.goal(external_ref='calendar://event')
         self.now += 3 * DAY
-        update = {"id": "bicycle", "status": "cancelled", "outcome_evidence": {
-            "sources": ["calendar://event/cancelled"], "verified_at": self.now, "summary": "Authoritative event cancelled"}}
-        with self.assertRaises(ValueError):
-            self.service.goal_update(update)
-        self.assertEqual(self.store.goal("bicycle")[0]["status"], "active")
-        with self.assertRaises(ValueError):
-            self.service.goal_update({**update, "external_status_verified": True})
-        signal = self.user("I confirm bicycle was cancelled")
-        update["signal_id"] = signal
-        update["evidence_refs"] = [{"kind":"user_report", "signal_id":signal, "quote":"I confirm bicycle was cancelled"}]
-        self.assertEqual(self.service.goal_update(update)["status"], "cancelled")
+        result=self.service.goal_update({'id':'bicycle','status':'cancelled','note':'User changed their mind'})
+        self.assertEqual(result['status'],'cancelled')
+        self.assertEqual(result['external_ref'],'calendar://event')
+        self.assertEqual(self.service.goal_update({'id':'bicycle','status':'active','note':'User restarted tracking'})['status'],'active')
 
     def test_independent_idea_has_evidence_expiry_and_no_implicit_goal(self):
         args = {"title": "An upcoming local exhibition", "rationale": "Matches known preferences",
@@ -436,13 +426,10 @@ class CompanionTests(unittest.TestCase):
     def test_closed_goal_stops_watches_but_keeps_final_result(self):
         self.goal()
         old = self.notice("old", goal_id="bicycle")
-        verified, body = self.store.goal("bicycle")
-        verified["followup"].update(result_state="verified", verification={"verified_at":self.now,"summary":"Synthetic result verified"})
-        self.store.save_goal(verified, body)
         final = self.notice("final", goal_id="bicycle", final_result=True, priority="urgent")
         for row in (old, final):
             self.service.notification_queue({"id": row["id"]})
-        self.service.goal_update({"id": "bicycle", "status": "completed", "signal_id": self.signal})
+        self.service.goal_update({"id": "bicycle", "status": "done", "note": "Result told to user"})
         self.assertEqual(self.host.paused, ["bicycle"])
         self.assertEqual(self.dispatch(old["id"]), "")
         self.assertEqual(self.dispatch(final["id"]), final["message"])
@@ -506,7 +493,7 @@ class CompanionTests(unittest.TestCase):
         self.goal()
         idea = self.service.idea_add({"goal_id": "bicycle", "title": "Compare gearing", "rationale": "Useful for this goal"})
         self.assertEqual(self.service.context()["interests_and_ideas"][0]["id"], idea["id"])
-        self.service.goal_update({"id": "bicycle", "status": "completed", "signal_id": self.signal})
+        self.service.goal_update({"id": "bicycle", "status": "done", "note": "Result told to user"})
         self.assertEqual(self.service.context()["interests_and_ideas"], [])
         self.assertEqual(self.store.read("interest", idea["id"])["status"], "cancelled")
 
@@ -518,11 +505,11 @@ class CompanionTests(unittest.TestCase):
         self.service.goal_update({"id": "bicycle", "status": "cancelled", "signal_id": self.signal})
         self.assertEqual(self.store.goal("child")[0]["status"], "cancelled")
 
-    def test_external_goal_requires_source_verification(self):
-        self.goal(external_ref="external/task/12")
-        with self.assertRaises(ValueError):
-            self.service.goal_update({"id": "bicycle", "status": "completed", "signal_id": self.signal})
-        self.assertEqual(self.store.goal("bicycle")[0]["status"], "active")
+    def test_external_goal_cancellation_keeps_owner_reference(self):
+        self.goal(external_ref='calendar:event-id')
+        result=self.service.goal_update({'id':'bicycle','status':'cancelled','note':'User cancelled tracking'})
+        self.assertEqual(result['external_ref'],'calendar:event-id')
+        self.assertEqual(result['status'],'cancelled')
 
     def test_feed_search_feedback_delete_and_no_recreation(self):
         args = {"event_key": "article-one", "title": "A bike comparison", "content": "Durable wheel bearings matter.", "sources": ["https://example.org/spec"], "why": "An explicit user interest"}

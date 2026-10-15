@@ -7,7 +7,7 @@ import uuid
 from .store import bounded
 
 
-def start(store, ctx, data, *, owned_cron=False, followups=None, session_id="", turn_id="", tool_call_id=None):
+def start(store, ctx, data, *, owned_cron=False, session_id="", turn_id="", tool_call_id=None):
     items = data.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= 24:
         raise ValueError("Research needs 1–24 independent read-only questions")
@@ -46,9 +46,7 @@ def start(store, ctx, data, *, owned_cron=False, followups=None, session_id="", 
         request = {"tasks": [{"goal": instructions + "\n" + "\n".join(
             f"{n+1}. {q}" for n, q in enumerate(group)), "context": request["context"]} for group in groups]}
     from .delegation import dispatch
-    result = (followups.dispatch(data.get("goal_id"), lambda req: dispatch(ctx, req, owned_cron=owned_cron),
-                                request, session_id=session_id, turn_id=turn_id, tool_call_id=tool_call_id)
-              if followups else dispatch(ctx, request, owned_cron=owned_cron))
+    result = dispatch(ctx, request, owned_cron=owned_cron)
     if result.get("status") not in {"dispatched", "completed"} and "results" not in result:
         error = ValueError("Native research dispatch did not return a usable batch; inspect the original outcome before retrying")
         error.native_result = result

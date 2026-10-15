@@ -77,7 +77,7 @@ def signals(service, data):
         # Appends after through belong to the next window; edits/backdated inserts invalidate this one.
         if signal_refs(store, window['after'], window['through'], db) != window['refs']:
             raise DomainError('revision_conflict', 'Signal window changed; open a new window at the saved checkpoint')
-        base = {'scope_token': scope, 'window': token, 'job': job, 'through': window['through'], 'after': window['after'], 'processed_through': store.get(db, 'cursor', job, 0),
+        base = {'window': token, 'job': job, 'through': window['through'], 'after': window['after'], 'processed_through': store.get(db, 'cursor', job, 0),
                 'instruction': 'Skip IDs at/before processed_through. Index is not reviewed evidence. Read each remaining id with window, offset and length; then review_complete(window,job,up_to,through,summary). Preserve timestamp ties.'}
         if not data.get('id'):
             return {**base, **index(window['refs'], data, token)}
@@ -132,10 +132,12 @@ def check_review(service, data, db, old, up_to, through):
 
 def context(service, data, *, view=None):
     views = Views(service.store.home)
-    views.check_scope(data.get('scope_token'))
     section = data.get('section', 'overview')
+    if section == 'followups':
+        from .followup import snapshot
+        return snapshot(service.store.home, now=service.clock(), cursor=data.get('cursor', ''), limit=data.get('limit', 25))
     if section in COLLECTIONS:
-        return views.read({'kind': section, **{k: v for k, v in data.items() if k in {'cursor','limit','id','offset','length','revision','scope_token','part'}}})
+        return views.read({'kind': section, **{k: v for k, v in data.items() if k in {'cursor','limit','id','offset','length','revision','part'}}})
     if section == 'signals':
         return signals(service, data)
     if section == 'conversations':
@@ -146,14 +148,13 @@ def context(service, data, *, view=None):
         return result
     if section != 'overview':
         raise DomainError('invalid_argument', 'Unknown section; read context without data for available sections')
-    return {'scope_token': views.scope(), 'now': service.clock(), 'job': view,
+    return {'now': service.clock(), 'job': view,
             'read_semantics': 'Bounded index. Collection pages use content_read revisions; signal windows freeze through and record served ranges.',
-            'sections': {k: {'action': 'context', 'data': {'section': k, 'limit': 25}} for k in (*COLLECTIONS, 'conversations')},
+            'sections': {k: {'action': 'context', 'data': {'section': k, 'limit': 25}} for k in (*COLLECTIONS, 'conversations', 'followups')},
             'operation_review': {'checkpoint': service.store.read('meta', 'operation_cursor'), 'findings_ref': {'action': 'context', 'data': {'section': 'finding'}}},
             'reviews': {job: service.store.read('meta', 'last_review:' + job) for job in GOVERNANCE_JOBS},
             'signal_reviews': {j: {'action': 'context', 'data': {'section': 'signals', 'job': j, 'limit': 25},
                                    'processed_through': service.store.read('cursor', j, 0)} for j in JOBS},
             'preferences_ref': {'action': 'content_read', 'data': {'kind': 'preferences', 'id': 'current'}},
             'installation_ref': {'action': 'content_read', 'data': {'kind': 'installation', 'id': 'current'}},
-            'followup_ref': {'action': 'followup_update', 'data': {'kind': 'due', 'offset': 0}},
             'instruction': 'Follow every section cursor. Read signal bodies before review_complete; no index is completion. Notification review requires all current conversation evidence. Existing followup unknown owners are inspected, never redispatched.'}

@@ -137,7 +137,6 @@ class Content:
             "id",
             "resource",
             "body",
-            "scope_token",
             "expected_revision",
             "request_id",
             "signal_id",
@@ -147,7 +146,6 @@ class Content:
         for key in (
             "kind",
             "id",
-            "scope_token",
             "expected_revision",
             "request_id",
             "body",
@@ -170,7 +168,6 @@ class Content:
             )
         if data["kind"] == "tools_note":
             validate_tools_note(body)
-        self.views.check_scope(data["scope_token"])
         relative = mapping(data["kind"], data["id"], data.get("resource"))
         key = revision(
             canonical([self.views.scope(), "content_write", data["request_id"]])
@@ -287,7 +284,6 @@ class Content:
                 raise DomainError("invalid_argument", field + " required")
         if len(data["request_id"]) > 128:
             raise DomainError("invalid_argument", "request_id too long")
-        self.views.check_scope(data.get("scope_token"))
         relative = mapping(kind, data["id"], data.get("resource"))
         with self.store.transaction() as db:
             signal = self.service.require_signal(db, data["signal_id"])

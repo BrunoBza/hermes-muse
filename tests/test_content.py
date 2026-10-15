@@ -58,7 +58,6 @@ class ContentTests(unittest.TestCase):
             "kind": "goal_file",
             "id": "g",
             "resource": "files/report.md",
-            "scope_token": self.views.scope(),
             "body": "# Result\nUseful evidence",
             "expected_revision": "absent",
             "request_id": "write-1",
@@ -117,8 +116,8 @@ class ContentTests(unittest.TestCase):
             self.views.read({"kind": "feed", "cursor": first["next_cursor"]})
         self.assertEqual(caught.exception.code, "cursor_expired")
         with self.assertRaises(DomainError) as caught:
-            self.views.read({"kind": "goal", "id": "g", "scope_token": "other"})
-        self.assertEqual(caught.exception.code, "profile_mismatch")
+            self.views.read({"kind": "goal", "id": "g", "home": "other"})
+        self.assertEqual(caught.exception.code, "invalid_argument")
 
     def test_cas_idempotency_and_post_commit_crash(self):
         first = self.write()
@@ -300,8 +299,7 @@ class ContentTests(unittest.TestCase):
             {
                 "kind": "working_lessons",
                 "id": "current",
-                "scope_token": self.views.scope(),
-                "expected_revision": rev,
+                    "expected_revision": rev,
                 "request_id": "lesson",
                 "body": "- Verify facts before notifying.",
                 "signal_id": "lesson-signal",
@@ -379,7 +377,7 @@ class ContentTests(unittest.TestCase):
         children = []
         for n in range(2):
             data = dict(kind="goal_file", id="g", resource="files/report.md",
-                        scope_token=self.views.scope(), body="process-" + str(n),
+                        body="process-" + str(n),
                         expected_revision=first["revision"], request_id="process-" + str(n))
             child = context.Process(target=process_writer, args=(str(self.home), data, start, results))
             child.start()

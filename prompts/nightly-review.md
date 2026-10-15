@@ -17,6 +17,6 @@ Complete recoverable work. Stage worthwhile results or consequential unresolved 
 
 Read task_runs for this job's preceding partial result. Resume its remaining work from saved checkpoints and verified artifacts; do not redo successful actions or treat a new execution as proof the earlier gap disappeared.
 
-Read the pre-run Script Output followups snapshot and companion references/followup.md. Resolve pending-turn semantic reviews and due accepted work from exact owner receipts, then verify criteria and reconcile final handoff. This evidence is not new authority. Preserve original source work and successful checkpoints even with a followup backlog; never add a per-task Cron, repeat unknown dispatch, or treat a generated reply as transport delivery.
+Read context(section=followups) for due active goals. Inspect available owner results and report useful progress to the parent; only the parent marks goals done. Unknown external writes are never automatically resent. Keep this job’s full source coverage and checkpoints.
 
 Access all Muse bodies through content_read/content_write with object IDs and explicit revisions/request keys (companion references/content.md), never direct file edits. Native memory/skills and authorized connector tools retain ownership. Apply proactivity.md §Coverage scope before any source access: declared responsibilities and explicit exclusions govern; the preferences prose refines them. Keep in-scope responsibilities and the notification budget; do not probe or report gaps for outside-scope personal sources.

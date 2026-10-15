@@ -28,7 +28,7 @@ Tell the user promptly about verified mistakes that affect them: what you did, i
 
 Hourly upkeep reviews new operations and unfinished repairs. Nightly review also extracts verified lessons into existing alignment/Working lessons; weekly/monthly reviews look for recurring causes and useful improvements. All-normal pages only advance the checkpoint: no separate copy of the execution log, new database or scheduled task is needed. When honoring a forgetting request, use `forget` with `{kind:"operation_finding", id, signal_id}` for related findings and include their summaries/evidence references in the cleanup, alongside native history and backups; do not claim erasure merely because an operational record was removed.
 
-Pre/post conversation hooks now retain pending-turn references even when the model omitted goal_create. In the existing hourly run, review the bounded Script Output candidates using the [followup procedure](followup.md), original user/assistant evidence and original signal time. A historical error that was repaired is not missing evidence; diagnose, verify repair and verify backlog recovery separately.
+Inspect due active goals with context(section=followups), without blocking the normal source sweep. Report owner results to the parent; only the parent marks goals done.
 
 Preserve necessary authorized local/enterprise/browser evidence. Pending slots remain in the saved wave for later review, never discarded. Existing active/unknown worker owners are retained for evidence recovery; parallel review does not authorize a duplicate dispatch.
 

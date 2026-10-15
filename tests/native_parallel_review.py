@@ -93,7 +93,7 @@ def run(home):
                     assert read(action)['read_semantics'].startswith('pure read')
                 goal=read('content_read',{'kind':'goal','id':'g'})
                 assert goal['metadata']['title']=='Synthetic goal'
-                assert read('content_read',{'kind':'goal','id':'g','scope_token':foreign_scope},False)['code']=='profile_mismatch'
+                assert read('content_read',{'kind':'goal','id':'g','home':'foreign'},False)['code']=='invalid_argument'
                 assert read('operations_evidence',{'receipt':assignment['receipt'],'profile':'other'},False)['code']=='invalid_argument'
                 assert read('content_read',{'kind':'goal','id':'g','home':str(home/'profiles/other')},False)['code']=='invalid_argument'
                 assert read('conversation_read',{'session_id':'group'},False)['code']=='permission_denied'

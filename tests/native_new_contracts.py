@@ -71,7 +71,6 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
             "description": "Research fixture",
             "completion_criteria": "Verified artifact",
             "signal_id": "u",
-            "request_id": "create",
         },
     )
     from tool_client import arguments
@@ -157,7 +156,6 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
         "kind": "goal_file",
         "id": "g",
         "resource": "files/result.md",
-        "scope_token": scoped["scope_token"],
         "expected_revision": "absent",
         "request_id": "result",
         "body": "Verified synthetic artifact",

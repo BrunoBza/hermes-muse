@@ -46,7 +46,7 @@ def archive(store, session_id, action, envelope):
     raw = encode(envelope)
     key = digest(encode([session_id, action, raw]))
     store.write('tool_result', key, {'id': key, 'session_id': session_id, 'action': action, 'body': raw})
-    ref = {'action': 'content_read', 'data': {'kind': 'tool_result', 'id': key, 'scope_token': Views(store.home).scope()}}
+    ref = {'action': 'content_read', 'data': {'kind': 'tool_result', 'id': key}}
     if envelope.get('ok'):
         return {'ok': True, 'result': {'result_is_reference': True, 'content_ref': ref,
                 'instruction': 'This call completed. Read the exact result in pages; do not repeat its side effects. Unknown native execution is not success or permission to redispatch.'}}
