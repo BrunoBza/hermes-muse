@@ -1,3 +1,8 @@
+# 0.2.4 — candidate (unreleased)
+
+- Add parent-only historical reply/successor binding through `followup_update(kind=rebind)` with exact native evidence, CAS, idempotency and repair preimages/conditional rollback.
+- Keep original execution receipts and unknown delivery semantics; no dispatch, automatic delivery inference, production migration or deployment.
+
 # 0.2.3 — followup evidence convergence (2026-10-15)
 
 - Converge native delegation terminal evidence through existing hooks; retain interrupted/failed distinctions and unknown safety.

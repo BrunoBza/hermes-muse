@@ -307,3 +307,11 @@ Scheduled source coverage follows explicit user requirements and the profile's d
 Native completion and session-end hooks reconcile proven terminal delegation receipts and replay explicitly reviewed original-session handoffs. Unreviewed text, even a summary/path match, never proves delivery. Corrupt or conflicting native evidence remains unknown; only an absent durable row permits manifest fallback. Host durable/aggregate manifest evidence wins over callback text; interrupted is not successful, and a recorded reply is not transport confirmation. Terminal orphan evidence stays stored but leaves the pending selection. Only a closed set of complete literal inquiries (for example `What is the status?` or `状态如何？`) can settle automatically, including a final answer with optional follow-on questions; topic-bearing or other free-form inquiries require explicit review; ambiguity and unknown outcomes remain for review. The existing review action can mark a settled turn unrelated to specified goal scopes, never all work. Older unreviewed cancellations still block; dry-run exposes the exact blocking candidate.
 
 Use `followup_update(kind=reconcile, mode=dry_run)` for bounded historical diagnosis, then explicitly authorized per-object apply with the returned revision and request_id. Each apply keeps an existing-store backup and offers CAS-guarded rollback; no bulk DB overwrite or unknown redispatch. Details in the companion followup reference. This source release does not imply installation or production migration.
+
+
+Historical followup binding (0.2.4 candidate, unreleased): the original private parent
+can use `followup_update(kind=rebind,binding=reply|successor)` with current goal
+content revision, request ID and exact native evidence. It preserves the original
+attempt, uses existing repair preimages/rollback, and never confirms transport or
+redispatches unknown work. See `skills/companion/references/followup.md` for fields
+and the separate verification/handoff steps. No production migration is automatic.

@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. followup_update(kind=reconcile,mode=dry_run) diagnoses historical evidence in bounded pages; apply/rollback require request_id and expected_revision. Never invent a signal ID, delivery receipt or authorization.",
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. followup_update(kind=reconcile,mode=dry_run) diagnoses historical evidence in bounded pages; apply/rollback require request_id and expected_revision. followup_update(kind=rebind,binding=reply/successor) is originating-parent-only historical evidence binding with CAS/request_id and repair rollback. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -70,6 +70,18 @@ class Runtime:
             if private_session(session_info()) and not is_delegated_child_context() and args['action'] not in reads:
                 ARCHIVE.set(lambda envelope: archive(self.store, kwargs.get('session_id', ''), args['action'], envelope))
             from .mutations import invoke
+            if args['action'] == 'followup_update' and args.get('data', {}).get('kind') == 'rebind':
+                info = session_info()
+                if (is_delegated_child_context() or not kwargs.get('session_id') or info['cron']
+                        or info.get('platform') in {'cron', 'delegate', 'subagent', 'webhook', 'kanban'} or kwargs.get('task_id')):
+                    from .content_io import DomainError
+                    raise DomainError('permission_denied', 'Historical binding requires the originating private parent, never Cron/child')
+            if args['action'] == 'followup_update' and args.get('data', {}).get('kind') == 'reconcile' and args['data'].get('mode') == 'rollback':
+                from .views import Views
+                repair = Views(self.home).record('followup_repair', args['data'].get('repair_id')) or {}
+                if repair.get('parent_session') and (kwargs.get('session_id') != repair['parent_session'] or session_info()['cron'] or kwargs.get('task_id') or is_delegated_child_context()):
+                    from .content_io import DomainError
+                    raise DomainError('permission_denied', 'Historical binding rollback is originating-parent-only')
             diagnostic = args["action"] == "followup_update" and args.get("data", {}).get("kind") == "reconcile" and args.get("data", {}).get("mode", "dry_run") == "dry_run"
             if diagnostic:
                 ARCHIVE.set(None)
@@ -144,8 +156,18 @@ class Runtime:
                     raise DomainError('permission_denied', 'Review windows and coverage belong to the parent; use conversation_read(read_only=true) for child history')
                 return self._response({'scope_token': view.scope(), 'read_semantics': 'pure read; parent owns review windows/checkpoints',
                     'sections': {kind: {'action':'content_read','data':{'kind':kind,'limit':25}} for kind in COLLECTIONS}})
+            if action == "followup_update" and data.get("kind") == "rebind":
+                from .followup_recovery import rebind
+                if info['cron'] or info.get('platform') in {'cron', 'delegate', 'subagent', 'webhook', 'kanban'} or kwargs.get('task_id'):
+                    raise DomainError('permission_denied', 'Historical binding requires the originating private parent, never Cron')
+                return self._response(rebind(self.service.followups, data, self.service.clock(),
+                    session_id=kwargs.get('session_id', ''), turn_id=kwargs.get('turn_id', '')))
             if action == "followup_update" and data.get("kind") == "reconcile":
                 from .followup_recovery import diagnose, apply
+                if data.get('mode') == 'rollback' and kwargs.get('task_id'):
+                    repair = self.store.read('followup_repair', data.get('repair_id')) or {}
+                    if repair.get('parent_session'):
+                        raise DomainError('permission_denied', 'Historical binding rollback is parent-only')
                 origin = {k: kwargs.get(k, "") for k in ("session_id", "turn_id")}
                 result = (diagnose(self.home, data, self.service.clock(), **origin) if data.get("mode", "dry_run") == "dry_run"
                           else apply(self.service.followups, data, self.service.clock(), **origin))

@@ -472,11 +472,13 @@ class Followups:
                 if not self.service.clock() - DAY <= verified <= self.service.clock():
                     raise ValueError("Verification needs current observed evidence")
                 receipt = Store.get(db, RECEIPT_KIND, fu.get("receipt_id"), {})
-                if receipt.get("native_status") == "unknown":
+                from .followup_recovery import successful_successor
+                successor = successful_successor(self.service, goal)
+                if not successor and receipt.get("native_status") == "unknown":
                     raise ValueError("Unknown execution is not verified success or verified failure")
-                if fu.get("intent_id") and (not receipt or not receipt.get("terminal")):
+                if not successor and fu.get("intent_id") and (not receipt or not receipt.get("terminal")):
                     raise ValueError("Owner is not terminal; record partial progress, not final verification")
-                if result == "verified" and receipt.get("failed"):
+                if not successor and result == "verified" and receipt.get("failed"):
                     raise ValueError("Native failure cannot be verified successful")
                 fu.update(result_state=result, execution_state="finished", blocker_class=None,
                           verification={"sources": refs, "evidence_refs": resolved, "verified_at": verified,
@@ -503,7 +505,11 @@ class Followups:
                     if reply.get("session_id") != goal["session_id"] or reply.get("observed_at", 0) < fu.get("source_created_at", goal["created"]):
                         raise ValueError("Reply must belong to this accepted source session and follow the original user request")
                     from .followup_recovery import exact_reply
-                    resolved_reply, history = exact_reply(self.store.home, reply, self.service.host.conversation(reply["session_id"], fu.get("source_created_at", goal["created"])))
+                    resolved_reply, history = exact_reply(self.store.home, reply,
+                        None if reply.get("historical_binding") else self.service.host.conversation(reply["session_id"], fu.get("source_created_at", goal["created"])),
+                        since=fu.get("source_created_at", goal["created"]))
+                    if reply.get('historical_binding') and not resolved_reply:
+                        raise ValueError('Bound historical reply changed or is unavailable; no handoff')
                     reply = resolved_reply or reply
                     from .delivery import reply_evidence
                     readable, relevant = reply_evidence(goal, reply, history)

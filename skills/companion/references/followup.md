@@ -86,3 +86,35 @@ Only complete literal inquiries in a small closed set, such as `What is the stat
 For complex input, first `kind=evidence,candidate_id` and read the original user/final reply. If it demonstrably does not concern certain existing goals, call `kind=review,candidate_id,expected_revision,disposition=unrelated,goal_ids=[...],reason=...` (1..20 explicit goals). This is a parent semantic judgment, not keyword guessing. The original turn stays pending/needs_clarification for its own task; only those unchanged goal scopes stop being held by it. Changed input/final reply or goal scope invalidates the clearance. Do not mark cancellations or scope changes unrelated. Review all blocking newer candidates; a newer unrelated message cannot hide an older unresolved instruction. `reconcile` dry-run returns change=false plus blocked_by with the exact candidate and revision when input review is required. Do not call apply blindly on blocked entries.
 
 Historical free-form replies without an explicit handoff review remain due. Read the real final reply and current criteria, then use existing `kind=handoff` only after semantic review that the result actually was handed off. Transport stays unconfirmed. Normal recurring Cron execution is still not automatic goal completion.
+
+### Historical binding (0.2.4 candidate)
+
+Only the original private parent session may use `followup_update(kind=rebind)`;
+Cron/children cannot. Read `content_read(kind=goal,id=...)` first and pass its
+opaque **content revision** as `expected_revision`, plus `request_id`, `goal_id`,
+`scope_token` and an explicit semantic `reason`. Review newer user input first.
+
+- `binding=reply`: pass native integer `message_id` and full UTF-8 SHA256
+  `message_hash`. The service checks the exact final assistant message in the
+  goal's original session, after acceptance. The returned `reply_id` is only a
+  historical reference. After verifying actual delivery, use normal `kind=handoff`
+  with the current **followup revision**. This can bind a reply older than a later
+  verification; no substring is used to infer delivery. It remains `unknown`,
+  never transport-confirmed/read. Negative or unreadable replies are not delivery.
+- `binding=successor`: pass an existing native `receipt_id` for a distinct successor
+  and `evidence_refs` containing exact same-session `native_message` references
+  with full `hash`. Explicitly explain why that result satisfies this goal, not
+  another task. Native durable/manifest evidence must independently prove the
+  successor completed; a worker summary alone is insufficient. Original
+  owner/receipt/failure remain intact. Then use normal verification/completion;
+  native evidence and unchanged scope are rechecked. No dispatch occurs.
+
+Both return `repair_id`, `goal_revision` (content), `followup_revision` and
+`revision` (repair CAS hash, used by rollback). Use existing
+`kind=reconcile,mode=rollback,repair_id,expected_revision,request_id` in the original
+parent session to undo an unconsumed unchanged binding. A later handoff, goal edit
+or changed related record blocks rollback; never restore an old DB wholesale.
+Same request/key replays its receipt; changed arguments conflict. A pending/crashed
+request stays unknown: inspect its repair preimage, never dispatch or invent proof.
+Cancelled/paused goals, unrelated sessions and newer unresolved directions retain
+their existing guards. Copy rehearsals are not production authorization or cleanup.

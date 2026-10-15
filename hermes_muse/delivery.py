@@ -37,9 +37,13 @@ def reply_evidence(goal, reply, history):
     from .store import digest
     fu = goal["followup"]
     verification = fu.get("verification", {})
+    from .content_io import revision
+    from .views import canonical
+    historical = reply.get('historical_binding') == {'goal_id': goal['id'], 'scope_revision': fu['scope_revision'],
+        'verification_revision': revision(canonical(verification))}
     if (reply.get("session_id") != goal.get("session_id")
             or reply.get("observed_at", 0) < max(fu.get("source_created_at", goal["created"]),
-                                                verification.get("verified_at", 0))):
+                                                0 if historical else verification.get("verified_at", 0))):
         return False, False
     matches = [m for m in history.get("messages", [])
                if m.get("role") == "assistant" and m.get("id") == reply.get("message_id")
@@ -49,7 +53,7 @@ def reply_evidence(goal, reply, history):
             or "message:" + str(entry.get("ref", {}).get("message_id", ""))
             for entry in verification.get("evidence_refs", [])]
     relevant = bool(text and not denies_delivery(text) and reply.get("message_id") and (
-        verification.get("summary") and verification["summary"] in text
+        historical or verification.get("summary") and verification["summary"] in text
         or any(isinstance(ref, str) and len(ref) >= 8 and ref in text for ref in refs)))
     return bool(text), relevant
 

@@ -259,3 +259,11 @@ A bounded lexical object scan advertises its live-pagination semantics; per-obje
 
 
 The input gate and diagnostic share `newer_input`: all unresolved newer turns remain blocking until answered as a supported complete literal inquiry, explicitly reviewed, or scoped `unrelated` by the parent. The scoped review binds original user/final-response hashes and goal scope_revision; later responses/scope changes invalidate it. It does not close the turn globally. The existing trusted active-origin-turn exception is forwarded for explicit repair calls, not background hooks. Inactive/unknown origins cannot bypass it. A newer unrelated turn cannot conceal an older unresolved cancellation.
+
+
+Historical followup binding (0.2.4 candidate, unreleased): the original private parent
+can use `followup_update(kind=rebind,binding=reply|successor)` with current goal
+content revision, request ID and exact native evidence. It preserves the original
+attempt, uses existing repair preimages/rollback, and never confirms transport or
+redispatches unknown work. See `skills/companion/references/followup.md` for fields
+and the separate verification/handoff steps. No production migration is automatic.

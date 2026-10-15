@@ -43,7 +43,7 @@ FIELDS = {
     "research_start": "items goal_id context",
     "research_status": "id",
     "forget": "kind object_kind id resource signal_id external_status_verified",
-    "followup_update": "mode object_kind id repair_id cursor scope_token kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset snapshot_revision disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id",
+    "followup_update": "binding message_id message_hash mode object_kind id repair_id cursor scope_token kind goal_id candidate_id receipt_id reply_id notice_id expected_revision expected_fingerprint signal_id source_quote offset snapshot_revision disposition reason next_action sources goal_ids execution_state result_state summary verified_at external_status_verified evidence_refs retry_failed_notice_id",
 }
 CAS = {
     "goal_update": "goal",
@@ -87,6 +87,9 @@ def validate(action, data):
         raise DomainError(
             "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown)[:8]) + (" (and more; all rejected)" if len(unknown) > 8 else "")
         )
+    if action == 'followup_update' and data.get('kind') == 'rebind':
+        if data.get('binding') not in {'reply', 'successor'} or not data.get('request_id') or not data.get('expected_revision'):
+            raise DomainError('invalid_argument', 'Rebind requires binding=reply/successor, request_id and current goal revision')
     if action == 'followup_update' and data.get('kind') == 'reconcile':
         if data.get('mode', 'dry_run') not in {'dry_run', 'apply', 'rollback'}:
             raise DomainError('invalid_argument', 'Use dry_run/apply/rollback')
@@ -149,7 +152,7 @@ def validate(action, data):
             raise DomainError("invalid_argument", name + " must be an array")
         if (
             (
-                name.endswith("_id")
+                (name.endswith("_id") and not (action == "followup_update" and data.get("kind") == "rebind" and name == "message_id"))
                 or name
                 in {
                     "id",

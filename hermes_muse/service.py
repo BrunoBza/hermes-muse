@@ -178,7 +178,8 @@ class Companion:
                 fu = record["followup"]
                 if status == "completed" and fu.get("intent_id"):
                     receipt = self.store.get(db, "followup_receipt", fu.get("receipt_id"), {})
-                    if not receipt.get("terminal") or receipt.get("native_status") == "unknown" or receipt.get("failed"):
+                    from .followup_recovery import successful_successor
+                    if (not receipt.get("terminal") or receipt.get("native_status") == "unknown" or receipt.get("failed")) and not successful_successor(self, record):
                         raise ValueError("Original native execution is not a verified successful terminal result")
                 if status == "completed" and record.get("outcome_refs"):
                     evidence = data.get("outcome_evidence") or {}
