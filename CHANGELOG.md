@@ -1,3 +1,10 @@
+# 0.2.3 — followup evidence convergence (local candidate)
+
+- Converge native delegation terminal evidence through existing hooks; retain interrupted/failed distinctions and unknown safety.
+- Record proven original-session handoff without claiming transport delivery; settle narrow answered status questions without goals.
+- Add bounded followup reconciliation dry-run, per-object CAS apply/preimage backup and conditional rollback in the existing tool/store.
+- Retain current-profile/child protections, cancellation, budgets and no-redispatch behavior. No production migration or deployment implied.
+
 # 0.2.2 — bounded context and maintenance evidence (local candidate)
 
 - Discoverable context/status section pages and frozen, reference-only signal review windows; reject unread checkpoint advances.

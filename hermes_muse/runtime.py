@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. Never invent a signal ID, delivery receipt or authorization.",
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. followup_update(kind=reconcile,mode=dry_run) diagnoses historical evidence in bounded pages; apply/rollback require request_id and expected_revision. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -70,7 +70,10 @@ class Runtime:
             if private_session(session_info()) and not is_delegated_child_context() and args['action'] not in reads:
                 ARCHIVE.set(lambda envelope: archive(self.store, kwargs.get('session_id', ''), args['action'], envelope))
             from .mutations import invoke
-            raw = invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
+            diagnostic = args["action"] == "followup_update" and args.get("data", {}).get("kind") == "reconcile" and args.get("data", {}).get("mode", "dry_run") == "dry_run"
+            if diagnostic:
+                ARCHIVE.set(None)
+            raw = self._handle(args, **kwargs) if diagnostic else invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
             return self._receipt(json.loads(raw), action=args['action'], data=args.get('data', {}))
         except Exception as exc:
             return self._error(exc)
@@ -141,6 +144,11 @@ class Runtime:
                     raise DomainError('permission_denied', 'Review windows and coverage belong to the parent; use conversation_read(read_only=true) for child history')
                 return self._response({'scope_token': view.scope(), 'read_semantics': 'pure read; parent owns review windows/checkpoints',
                     'sections': {kind: {'action':'content_read','data':{'kind':kind,'limit':25}} for kind in COLLECTIONS}})
+            if action == "followup_update" and data.get("kind") == "reconcile":
+                from .followup_recovery import diagnose, apply
+                result = (diagnose(self.home, data, self.service.clock()) if data.get("mode", "dry_run") == "dry_run"
+                          else apply(self.service.followups, data, self.service.clock()))
+                return self._response(result)
             if action == "operations_evidence":
                 return self._response(self.service.operations.evidence(data))
             if action == "conversation_read" and (delegated or data.get("read_only")):
@@ -196,6 +204,9 @@ class Runtime:
                     view = None
                     if len(parts) == 3 and parts[0] == "cron":
                         view = self.host.manifest()["jobs"].get(parts[1], {}).get("key")
+                    if view and data.get("section", "overview") == "overview":
+                        from .followup_recovery import automatic
+                        automatic(self.service.followups, None, self.service.clock())
                     from .context_pages import context
                     result = context(self.service, data, view=view)
                     if data.get('section', 'overview') == 'overview':
@@ -357,13 +368,17 @@ class Runtime:
                     with self.lock:
                         self.run_turns[session_id] = run
                     self.service.operations.track(session_id, kwargs.get("task_id"))
+        text = user_message if isinstance(user_message, str) else json.dumps(user_message, ensure_ascii=False)
+        match = re.match(r"^\[ASYNC DELEGATION (?:BATCH COMPLETE|COMPLETE|TASK FAILED) — ([A-Za-z0-9_-]+)(?:, task [0-9]+/[0-9]+)?\]", text.lstrip())
+        from agent.delegation_context import is_delegated_child_context
+        if match and not self.closed and not parent_session_id and not is_delegated_child_context() and private_session(info):
+            from .followup_recovery import automatic
+            automatic(self.service.followups, session_id, self.service.clock(), owner_id=match[1])
         if self.closed or parent_session_id or info["cron"] or platform in {"cron", "delegate", "subagent", "webhook", "msgraph_webhook", "kanban"} or not private_session(info):
             return None
-        text = user_message if isinstance(user_message, str) else json.dumps(user_message, ensure_ascii=False)
         if text.lstrip().startswith(('[Cronjob "', "[Hermes Muse notification ", MARKER)):
             return {"context": receiving_instructions()}
         if is_background_message(text):
-            match = re.match(r"^\[ASYNC DELEGATION (?:BATCH COMPLETE|COMPLETE|TASK FAILED) — ([A-Za-z0-9_-]+)(?:, task [0-9]+/[0-9]+)?\]", text.lstrip())
             value = self._followup_context(session_id, turn_id, callback_owner=match[1] if match else None)
             return {"context": value + "\nBackground process completion is intermediate evidence. Report only blockers, changed direction or verified results; do not infer goal completion."} if value else None
         if not session_id or not turn_id or not text.strip():
@@ -449,6 +464,10 @@ class Runtime:
         if self.closed:
             return
         self.service.followups.finish_turn(session_id, turn_id, **kwargs)
+        from agent.delegation_context import is_delegated_child_context
+        if private_session(session_info()) and not is_delegated_child_context():
+            from .followup_recovery import automatic
+            automatic(self.service.followups, session_id, self.service.clock())
         with self.lock:
             self.delivery_turns.pop(session_id, None)
             self.run_turns.pop(session_id, None)

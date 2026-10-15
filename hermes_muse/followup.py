@@ -151,7 +151,7 @@ def snapshot(home, *, now=None, session_id=None, offset=0, exclude_turn=None, ro
         following = max(start, turn_offset) + LIMIT
         result["next_offset"] = following if following < max(len(due), len(turns)) else None
         result["partial_selection"] = len(due) > LIMIT or len(turns) > LIMIT
-        orphans = [r for r in records.get(RECEIPT_KIND, []) if not r.get("intent_id")
+        orphans = [r for r in records.get(RECEIPT_KIND, []) if not r.get("intent_id") and not (r.get("terminal") and r.get("native_status") in {"completed", "interrupted", "failed", "cancelled"})
                    and (not session_id or r.get("session_id") == session_id)]
         result["orphan_total"] = len(orphans)
         result["next_offset"] = following if following < max(len(due), len(turns), len(orphans)) else None
@@ -481,7 +481,9 @@ class Followups:
                     reply = Store.get(db, REPLY_KIND, data["reply_id"], {})
                     if reply.get("session_id") != goal["session_id"] or reply.get("observed_at", 0) < fu.get("source_created_at", goal["created"]):
                         raise ValueError("Reply must belong to this accepted source session and follow the original user request")
-                    history = self.service.host.conversation(reply["session_id"], reply["observed_at"] - 5)
+                    from .followup_recovery import exact_reply
+                    resolved_reply, history = exact_reply(self.store.home, reply, self.service.host.conversation(reply["session_id"], fu.get("source_created_at", goal["created"])))
+                    reply = resolved_reply or reply
                     from .delivery import reply_evidence
                     readable, relevant = reply_evidence(goal, reply, history)
                     if readable and not relevant:
@@ -687,9 +689,9 @@ class Followups:
         state = str(native.get("state", native.get("status", "completed" if isinstance(native.get("results"), list) else "unknown"))).lower()
         if state in {"success", "succeeded"}:
             state = "completed"
-        if state in {"error", "failure", "timeout", "interrupted", "stalled"}:
+        if state in {"error", "failure", "timeout", "stalled"}:
             state = "failed"
-        terminal = state in {"completed", "failed", "cancelled", "unknown"} and not native_pending(native)
+        terminal = state in {"completed", "interrupted", "failed", "cancelled", "unknown"} and not native_pending(native)
         if not owner_id and not tool_call_id:
             return  # No verifiable identity.
         failed = native_failed(native)
