@@ -98,10 +98,13 @@ def signals(service, data):
         if type(offset) is not int or not 0 <= offset <= len(text) or type(length) is not int or not 1 <= length <= 24000:
             raise DomainError('invalid_argument', 'Use offset within body and length 1..24000')
         end = min(len(text), offset + length)
+        result = {**base, **ref, **original, 'session_id': row['session_id'], 'body': text[offset:end],
+                  'offset': offset, 'next_offset': end if end < len(text) else None}
+        from .responses import require_fit
+        require_fit(result)
         window['served'][ref['id']] = _merge(window['served'].get(ref['id'], []) + [[offset, end]])
         store.put(db, 'review_window', token, window)
-        return {**base, **ref, **original, 'session_id': row['session_id'], 'body': text[offset:end],
-                'offset': offset, 'next_offset': end if end < len(text) else None}
+        return result
 
 
 def check_review(service, data, db, old, up_to, through):

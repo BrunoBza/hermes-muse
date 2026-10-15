@@ -92,7 +92,10 @@ class CompanionTests(unittest.TestCase):
         binding = {"job_id": "patrol", "execution_id": "r", "route": {"deliver": "bot-chat"}}
         blocked = self.service.notification_queue({"id": row["id"]}, binding)
         self.assertEqual(blocked["final_response"], "[SILENT]")
-        self.assertIn("session-a", blocked["recent_conversations"])
+        self.assertEqual(blocked['continuation']['data']['section'], 'conversations')
+        self.assertFalse(any(w['ranges'] for w in self.store.all('conversation_window')))
+        from hermes_muse.conversation import page
+        page(self.store, {**snapshot, 'session_id': 'session-a'}, {'revision': 'r1', 'offset': 0}, self.now)
         reviewed = self.service.notification_review({"id": row["id"], "conversation_revisions": {"session-a": "r1"},
             "verdict": "resolved", "reason": "The actual diagnosis was completed and delivered in the native conversation"})
         self.assertEqual(reviewed["notification"]["status"], "cancelled")

@@ -50,7 +50,9 @@ def start(store, ctx, data, *, owned_cron=False, followups=None, session_id="", 
                                 request, session_id=session_id, turn_id=turn_id, tool_call_id=tool_call_id)
               if followups else dispatch(ctx, request, owned_cron=owned_cron))
     if result.get("status") not in {"dispatched", "completed"} and "results" not in result:
-        raise ValueError("Native research dispatch failed: " + str(result)[:2000])
+        error = ValueError("Native research dispatch did not return a usable batch; inspect the original outcome before retrying")
+        error.native_result = result
+        raise error
     batch = {"id": key, "mode": "native", "goal_id": data.get("goal_id"), "created": time.time(),
              "total": len(unique), "dispatch": result}
     store.write("research", key, batch)

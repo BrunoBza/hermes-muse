@@ -421,6 +421,8 @@ class Companion:
         job = data.get("job")
         if job not in {"memory-upkeep", "nightly-review", "feed-pulse", "proactive-watch", *GOVERNANCE_JOBS}:
             raise ValueError("Unknown review job")
+        if 'window' in data and job not in {'memory-upkeep', 'nightly-review'}:
+            raise ValueError('window is only valid for memory-upkeep/nightly-review')
         up_to = epoch(data["up_to"])
         now = self.clock()
         through = epoch(data.get("through", now))

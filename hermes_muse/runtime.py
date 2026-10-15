@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installation_prepare", "context", "status", "conversation_read", "followup_update", "goal_create", "goal_update", "interest_record", "idea_add", "feedback",
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
-SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Never invent a signal ID, delivery receipt or authorization.",
+SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Parent context/status return a bounded section directory. Use section, cursor, limit; section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. Never invent a signal ID, delivery receipt or authorization.",
           "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
 
 
@@ -57,12 +57,34 @@ class Runtime:
         self.closed = False
 
     def handle(self, args, **kwargs):
+        from .responses import ARCHIVE, archive, preflight, invoke_once
+        token = ARCHIVE.set(None)
         try:
+            preflight(args)
+            if not private_session(session_info()):
+                from .content_io import DomainError
+                raise DomainError('permission_denied', 'Personal Muse data is available in private/direct conversations only')
+            from agent.delegation_context import is_delegated_child_context
+            # Pure reads never create result records, including rejected child calls.
+            reads = {'content_read', 'feed_list', 'calendar_window', 'calendar_view', 'operations_evidence', 'conversation_read'}
+            if private_session(session_info()) and not is_delegated_child_context() and args['action'] not in reads:
+                ARCHIVE.set(lambda envelope: archive(self.store, kwargs.get('session_id', ''), args['action'], envelope))
             from .mutations import invoke
-            return invoke(self, args, kwargs, self._handle)
+            raw = invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
+            return self._receipt(json.loads(raw), action=args['action'], data=args.get('data', {}))
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc), "code": getattr(exc, "code", "invalid_argument"),
-                               "retryable": False, **getattr(exc, "details", {})}, ensure_ascii=False)
+            return self._error(exc)
+        finally:
+            ARCHIVE.reset(token)
+
+    @staticmethod
+    def _error(exc):
+        error = {"ok": False, "error": str(exc), "code": getattr(exc, "code", "invalid_argument"),
+                 "retryable": getattr(exc, "code", "") in {"revision_conflict", "cursor_expired", "source_unavailable"},
+                 **getattr(exc, "details", {})}
+        if hasattr(exc, "native_result"):
+            error['native'] = exc.native_result
+        return Runtime._receipt(error)
 
     def _handle(self, args, **kwargs):
         try:
@@ -93,9 +115,11 @@ class Runtime:
             action = args["action"]
             from .contracts import validate
             validate(action, data)
-            from .contracts import CAS, CREATES
+            from .contracts import CAS, CREATES, REPLAY_ACTIONS
             if (action in CAS or action in CREATES) and not (action == "forget" and data.get("kind") == "content"):
                 data = {k:v for k,v in data.items() if k not in {"expected_revision", "request_id", "scope_token"}}
+            if action in REPLAY_ACTIONS:
+                data = {k: v for k, v in data.items() if k != "request_id"}
             if action not in ACTIONS:
                 raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
@@ -126,7 +150,7 @@ class Runtime:
                 raise DomainError("invalid_argument", "History time filters require read_only=true; filtered reads cannot certify notice coverage")
             if action in {"content_read", "feed_list", "calendar_window", "calendar_view"}:
                 if action == "content_read":
-                    view = Views(self.home)
+                    view = Views(self.home, session_id=kwargs.get("session_id", ""))
                     parts = str(kwargs.get("task_id") or "").split(":", 2)
                     if len(parts) == 3 and parts[0] == "cron":
                         stored = view.record("run", parts[2]) or {}
@@ -255,10 +279,7 @@ class Runtime:
             return self._response(result, action=action, data=data)
         except Exception as exc:
             log.warning("Hermes Muse action %s failed: %s", args.get("action"), exc)
-            error = {"ok": False, "error": str(exc), "code": getattr(exc, "code", "invalid_argument"), "retryable": getattr(exc, "code", "") in {"revision_conflict", "cursor_expired", "source_unavailable"}, **getattr(exc, "details", {})}
-            if hasattr(exc, "native_result"):
-                error["native"] = exc.native_result
-            return json.dumps(error, ensure_ascii=False)
+            return self._error(exc)
 
     @staticmethod
     def _response(result, *, action=None, data=None):
@@ -271,8 +292,14 @@ class Runtime:
         result = envelope.get("result") if envelope.get("ok") else None
         raw = json.dumps(envelope, ensure_ascii=False, allow_nan=False)
         if len(raw.encode()) > 256 * 1024:
+            if envelope.get('ok') and action == 'operations_read' and isinstance(result, dict) and result.get('token'):
+                return Runtime._receipt({**envelope, 'result': {
+                    'token': result['token'], 'result_is_reference': True,
+                    'content_ref': {'action': 'operations_evidence', 'data': {'receipt': result['token'], 'offset': 0, 'limit': 25}},
+                    'findings_ref': {'action': 'content_read', 'data': {'kind': 'finding', 'limit': 25}},
+                    'instruction': 'Allocation is saved, not reviewed. Page the native evidence index and expand every ref before operations_complete; no transcript copy is stored here.'}})
             from .contracts import CAS
-            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation',
+            kinds = {**CAS, 'feed_add': 'feed', 'notification_add': 'notice', 'goal_create': 'goal', 'interest_record': 'interest', 'idea_add': 'idea', 'run_complete': 'run', 'installation_prepare': 'installation', 'research_start': 'research',
                      'notification_prepare': 'notice', 'notification_queue': 'notice', 'notification_handoff': 'notice'}
             kind = kinds.get(action)
             if action == 'feedback':
@@ -291,6 +318,15 @@ class Runtime:
                     if isinstance(result, dict) and field in result:
                         bounded[field] = result[field]
                 return Runtime._receipt({**envelope, "result": bounded})
+            from .responses import ARCHIVE
+            archive = ARCHIVE.get()
+            if archive:
+                # Exact completed results/errors, not another business state machine.
+                return Runtime._receipt(archive(envelope))
+            if not envelope.get('ok'):
+                return json.dumps({'ok': False, 'code': str(envelope.get('code', 'invalid_argument'))[:128],
+                                   'error': str(envelope.get('error', 'Tool failed'))[:2000],
+                                   'error_truncated': True, 'retryable': False}, ensure_ascii=False)
             raise DomainError("size_limit", "Response exceeds 256 KiB; request a smaller page or source/window batch")
         return raw
 

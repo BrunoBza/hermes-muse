@@ -136,10 +136,11 @@ def validate_tools_note(body):
 
 
 class Views:
-    def __init__(self, home, *, allow_hidden=False):
+    def __init__(self, home, *, allow_hidden=False, session_id=None):
         self.home = Path(home).resolve()
         self.files = Files(self.home)
         self.allow_hidden = allow_hidden
+        self.session_id = session_id
 
     def manifest(self):
         try:
@@ -226,6 +227,11 @@ class Views:
                 "permission_denied",
                 "Hidden artifacts require a host-bound maintenance parent",
             )
+        if kind == 'tool_result':
+            row = self.record('tool_result', identifier(key))
+            if not row or self.session_id is None or row.get('session_id') != self.session_id:
+                raise DomainError('permission_denied', 'Tool result is outside this originating session')
+            return row['body'], {'id': key, 'action': row['action']}, revision(row['body'].encode())
         if kind in RECORDS:
             row = self.record(RECORDS[kind], identifier(key))
             if (
@@ -364,7 +370,7 @@ class Views:
         scope = self.scope()
         self.check_scope(data.get("scope_token"))
         kind, key = data.get("kind"), data.get("id")
-        if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index"}:
+        if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}:
             raise DomainError("invalid_argument", "Unsupported content kind")
         base = {"scope_token": scope, "kind": kind, "observed_at": time.time()}
         if key is None or kind == "goal_file" and not data.get("resource"):

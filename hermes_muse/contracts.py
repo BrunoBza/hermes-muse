@@ -67,22 +67,63 @@ CREATES = {
 }
 
 
+# Optional replay keys for actions without an existing object/content journal.
+REPLAY_ACTIONS = {'delegate', 'research_start', 'research_status', 'watch_stop',
+                  'operations_read', 'operations_batch', 'operations_complete', 'operations_commit',
+                  'review_complete', 'run_complete', 'notification_prepare', 'notification_queue',
+                  'notification_handoff', 'followup_update'}
+
+
 def validate(action, data):
     if action not in FIELDS or not isinstance(data, dict):
         raise DomainError("invalid_argument", "Unknown action or invalid data object")
     allowed = set(FIELDS[action].split())
     if action in CAS or action in CREATES:
         allowed |= {"expected_revision", "request_id", "scope_token"}
+    if action in REPLAY_ACTIONS:
+        allowed.add("request_id")
     unknown = set(data) - allowed
     if unknown:
         raise DomainError(
-            "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown))
+            "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown)[:8]) + (" (and more; all rejected)" if len(unknown) > 8 else "")
         )
     if action in {'context', 'status', 'review_complete'} and 'window' in data and not isinstance(data['window'], str):
         raise DomainError('invalid_argument', 'window must be text')
     if action in {'context', 'status', 'content_read'} and 'cursor' in data and not isinstance(data['cursor'], str):
         raise DomainError('invalid_argument', 'cursor must be text')
+    if action == 'content_write' and isinstance(data.get('body'), str):
+        if len(data['body']) > 60000 or len(data['body'].encode()) > 256 * 1024:
+            raise DomainError('size_limit', 'body exceeds 60000 characters/256 KiB')
+    bounds = {'watch_create': {'prompt': 4000, 'stop_condition': 4000},
+              'research_start': {'context': 8000}}
+    common = {'title': 300, 'description': 8000, 'completion_criteria': 8000,
+              'summary': 4000 if action == 'finding_record' else 2000,
+              'reason': 2000, 'rationale': 2000, 'why': 2000, 'feedback': 2000,
+              'progress': 2000, 'next_action': 2000, 'source_quote': 2000,
+              'event_key': 500, 'issue_key': 500, 'priority_reason': 2000,
+              'content': 60000, 'feed_brief': 12000, 'alias_reason': 1000}
+    if action == 'goal_create':
+        common['title'] = 200
+    if action in {'notification_add', 'notification_refresh'}:
+        common['message'] = 6000
+    if action == 'source_check':
+        common.update(scope=1000, cursor=4000)
+    for name, maximum in {**common, **bounds.get(action, {})}.items():
+        if isinstance(data.get(name), str) and len(data[name]) > maximum:
+            raise DomainError('size_limit', name + ' exceeds its action budget')
+    if action == 'research_start' and isinstance(data.get('items'), list):
+        if not 1 <= len(data['items']) <= 24 or any(not isinstance(x, str) or len(x) > 2000 for x in data['items']):
+            raise DomainError('size_limit', 'research items require 1..24 text questions of at most 2000 characters')
+    if action == 'review_complete' and 'window' in data and data.get('job') not in {'memory-upkeep', 'nightly-review'}:
+        raise DomainError('invalid_argument', 'window is only valid for memory-upkeep/nightly-review')
+    for name in ('window', 'revision', 'expected_revision', 'snapshot_revision', 'scope_token', 'request_id'):
+        if isinstance(data.get(name), str) and len(data[name]) > (128 if name == 'request_id' else 1024):
+            raise DomainError('size_limit', name + ' exceeds its token budget')
+    if action in {'context', 'status', 'content_read', 'feed_list'} and isinstance(data.get('cursor'), str) and len(data['cursor']) > 2048:
+        raise DomainError('size_limit', 'cursor exceeds its token budget')
     for name, value in data.items():
+        if (name.endswith('_id') or name in {'id', 'kind', 'section', 'job', 'resource'}) and isinstance(value, str) and len(value) > 512:
+            raise DomainError('size_limit', name + ' exceeds its identity budget')
         if name in {"offset", "length", "limit", "batch"} and type(value) is not int:
             raise DomainError("invalid_argument", name + " must be an integer")
         if (
@@ -125,7 +166,7 @@ def validate(action, data):
             and not isinstance(value, str)
         ):
             raise DomainError("invalid_argument", name + " must be text")
-    if action in CAS or action in CREATES:
+    if action in CAS or action in CREATES or "request_id" in data:
         if (
             not isinstance(data.get("request_id"), str)
             or not 1 <= len(data["request_id"]) <= 128

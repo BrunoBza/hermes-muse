@@ -156,6 +156,9 @@ def page(store, state, data, now, *, record_coverage=True):
                 break
             messages.append(item)
         position = following
+    from .responses import require_fit
+    require_fit({'session_id': state['session_id'], 'revision': state['revision'], 'messages': messages,
+                 'offset': offset, 'next_offset': end, 'total_text_chars': total})
     complete = _coverage(store, state, [[offset, end]], now) if record_coverage else end == total
     return {'available': True, 'session_id': state['session_id'], 'revision': state['revision'],
             'messages': messages, 'offset': offset, 'next_offset': end if end < total else (descriptor(store, state, now)['next_offset'] if record_coverage and not complete else None),
