@@ -6,6 +6,7 @@
 - Add bounded followup reconciliation dry-run, per-object CAS apply/preimage backup and conditional rollback in the existing tool/store.
 - Retain current-profile/child protections, cancellation, budgets and no-redispatch behavior. No production migration or deployment implied.
 - v0.2.3 is the first public release since 0.1.27; 0.2.0–0.2.2 were developed on the same branch and ship with it.
+- State that Windows is not supported for now and drop it from the CI matrix.
 - Document the 30-minute floor for new repeating watches and the parent-model default for workers consistently, and add regression tests for the floor, Cron `feed_brief` edits not waking `feed-pulse`, and the unit suite on hosts without Hermes core or with symlinked temp directories.
 
 # 0.2.2 — bounded context and maintenance evidence (2026-10-15)

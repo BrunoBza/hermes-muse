@@ -24,3 +24,5 @@ All Muse workers use public ctx.dispatch_tool("delegate_task", request, parent_a
 New repeating watches require a provable minimum 30-minute interval. Native parse_schedule distinguishes interval/cron/once. Five-field minute/hour schedules are checked across every daily slot and midnight; unsupported syntax or timezone-transition ambiguity is refused with advice to use every 30m. Once is exempt. Existing job schedules and user edits are not rewritten. Cron-created watches still require cron.allow_agent_scheduling. Cron edits to feed_brief do not wake feed-pulse.
 
 Children have no business-write authority. The installed host does not expose reliable parent object-grant propagation, so broad child reads fail closed; parents pass bounded evidence and keep persistence/verification. This is not a sandbox around native terminal/browser tools.
+
+Windows is not supported for now: the content and lock implementation uses POSIX file locks and descriptor-relative file access. CI covers Linux and macOS only.

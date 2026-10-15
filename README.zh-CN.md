@@ -259,7 +259,7 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 
 独立验收修复：installation_prepare 只接受明确指向 Muse 且与 operation 匹配的当前整句命令，例如“请停用Muse插件”或“请卸载Muse插件”；引用、询问、否定、延后和无关删除不构成授权。旧 saved 回执只可在原回合告知，staged 跨轮仍是待确认。source_check 的 CAS 和实际更新共用 canonical 来源解析。
 
-**平台限制：** 安全文件访问依赖 POSIX，0.1.x 的 Windows 支持尚未恢复。Windows CI 保留，未声称通过；需要安全的原生句柄适配，不能靠取消 symlink 检查降级。
+**平台限制：** 安全文件访问依赖 POSIX，0.1.x 的 Windows 支持尚未恢复。Windows 暂不支持（依赖 POSIX 文件锁），CI 不覆盖；需要安全的原生句柄适配，不能靠取消 symlink 检查降级。
 
 ## 统一 Dashboard
 

@@ -255,7 +255,7 @@ Recent conversation context uses bounded previews with complete revision-checked
 
 ## Scoped tools and plugin pages
 
-**Platform limitation:** the secure content/lock implementation is POSIX-specific and breaks the Windows support of 0.1.x. Windows CI remains in place; no Windows pass or safe fallback is claimed. Restoring Windows requires a secure native-handle implementation, not disabling symlink checks.
+**Platform limitation:** the secure content/lock implementation is POSIX-specific and breaks the Windows support of 0.1.x. Windows is not supported for now (POSIX file locks and descriptor-relative file access) and CI does not cover it; no unsafe fallback is provided. Restoring Windows requires a secure native-handle implementation, not disabling symlink checks.
 
 Muse includes Dashboard and Desktop pages for the complete Feed, topics, ideas and goals. APIs are authenticated by Hermes and check the requested profile on every GET. Browsing creates no read state or model work. Desktop changes start as a draft in a selected originating chat; the user sends it through normal tool authorization. Install the same package on the Desktop device to obtain its entry; a remote backend install alone does not install the client entry.
 
