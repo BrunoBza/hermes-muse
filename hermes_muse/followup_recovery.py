@@ -121,16 +121,20 @@ def exact_reply(home, reply, history=None, *, since=0):
 
 
 def answered_question(view, row):
-    """Only narrow status/factual questions; ambiguous requests retain semantic review."""
+    """Only complete literal inquiries; free text always retains semantic review."""
     if not row.get('ended') or row.get('failed') or row.get('interrupted') or row.get('disposition') != 'pending':
         return False
     signal = view.record('signal', row['signal_id']) or {}
     text = signal.get('text', '').strip()
     if signal.get('truncated') or digest(text) != row.get('user_hash'):
         return False
-    if not re.fullmatch(r"(?i)(what(?:'s| is) (?:the |its |current )?(?:status|time|version)|how (?:is|are) [^?？.!。！\n]{1,100}|[^?？.!。！\n]{0,100}(?:状态如何|怎么样了|什么版本|几点了))[?？。!！ ]*", text):
-        return False
-    if re.search(r'(?i)(cancel|stop|pause|hold|change|delete|please|取消|停止|暂停|不要|不再|改为|删除|帮我|请)', text):
+    # Closed complete utterances only: never infer that arbitrary topic/prefix text
+    # lacks an instruction. Everything else needs the existing semantic review.
+    if text.casefold() not in {
+        "what is the status?", "what's the status?", "what is the current status?",
+        "what time is it?", "what is the version?",
+        "状态如何？", "现在状态如何？", "目前状态如何？", "什么版本？", "几点了？",
+    }:
         return False
     if any(r.get('turn_id') == row['signal_id'] and r.get('session_id') == row['session_id'] for r in view.rows('followup_receipt')):
         return False
@@ -171,7 +175,7 @@ def proposed(view, kind, row, now, **origin):
         if any(g.get('source_signal') == row['signal_id'] for k, _, g in objects(view) if k == 'goal'):
             return None
         if answered_question(view, row):
-            after.update(disposition='no_commitment', reason='Native settled answer to a narrow status/factual question; no accepted work', revision=row['revision'] + 1)
+            after.update(disposition='no_commitment', reason='Native settled answer to a complete literal inquiry; no accepted work', revision=row['revision'] + 1)
     else:
         fu = row.get('followup') or {}
         receipt = view.record('followup_receipt', fu.get('receipt_id', '')) or {}

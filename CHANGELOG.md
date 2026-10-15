@@ -1,7 +1,7 @@
 # 0.2.3 — followup evidence convergence (local candidate)
 
 - Converge native delegation terminal evidence through existing hooks; retain interrupted/failed distinctions and unknown safety.
-- Replay explicitly reviewed original-session handoffs without claiming transport delivery; unreviewed summary/path mentions never prove delivery. Settle narrow answered status questions without goals.
+- Replay explicitly reviewed original-session handoffs without claiming transport delivery; unreviewed summary/path mentions never prove delivery. Settle only complete literal inquiries from a closed set without goals; arbitrary prefixes/topics and mixed instructions remain pending for explicit review.
 - Fail closed on corrupt/conflicting durable evidence. Expose newer-input blockers and support goal-scoped semantic unrelated reviews without hiding older cancellations.
 - Add bounded followup reconciliation dry-run, per-object CAS apply/preimage backup and conditional rollback in the existing tool/store.
 - Retain current-profile/child protections, cancellation, budgets and no-redispatch behavior. No production migration or deployment implied.

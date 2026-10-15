@@ -222,7 +222,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_answered_inquiry_with_optional_question_does_not_hold_old_goal(self):
         self.reviewed_goal()
-        self.new_turn('How is the unrelated service?', 'It is healthy. Would you like more detail?')
+        self.new_turn('What is the status?', 'It is healthy. Would you like more detail?')
         automatic(self.service.followups,'s',self.now)
         self.assertEqual(self.store.read('followup_turn',digest('s:new'))['disposition'],'no_commitment')
         self.assertEqual(self.store.goal('g')[0]['followup']['delivery_basis']['kind'],'reply')
@@ -278,3 +278,42 @@ class RecoveryTests(unittest.TestCase):
         self.service.followups.finish_turn('s','separate',response='Now cancel g too.')
         item=next(x for x in diagnose(self.home,{},self.now)['items'] if x['id']=='g')
         self.assertEqual(item['blocked_by']['candidate_id'],separate['id'])
+
+    def test_closed_inquiry_set_rejects_all_extra_text_and_mixed_instructions(self):
+        from hermes_muse.followup_recovery import answered_question
+        from hermes_muse.views import Views
+        self.reviewed_goal()
+        mixed = [
+            '放弃 fixture，状态如何？', '状态如何？放弃 fixture',
+            'fixture先搁置，状态如何？', '状态如何，fixture先缓一缓？',
+            'fixture改成只读，状态如何？', '状态如何？不做fixture了。',
+            'Forget fixture, what is the status?', 'What is the status? Drop fixture.',
+            '状态如何？ Abandon fixture.', 'Abandon fixture，状态如何？',
+            'How is fixture if we abandon it?', 'How is fixture and shelve it',
+            'What is the status? Instead, change the scope.',
+            'What is the status?\n暂停 fixture', '请回答“状态如何？”并结束 fixture。',
+            'How is the other service?', 'fixture现在怎么样了',
+        ]
+        for i,text in enumerate(mixed):
+            with self.subTest(text=text):
+                row=self.new_turn(text,'当前结果已记录。是否需要详细信息？',key='mixed'+str(i))
+                self.assertFalse(answered_question(Views(self.home),row))
+                automatic(self.service.followups,'s',self.now)
+                self.assertEqual(self.store.read('followup_turn',row['id'])['disposition'],'pending')
+                goal=self.store.goal('g')[0]
+                self.assertEqual(goal['status'],'active')  # do not manufacture cancellation either
+                self.assertIsNone(goal['followup'].get('delivery_basis'))
+                self.assertEqual(snapshot(self.home,now=self.now)['due_total'],1)
+        # A later pure inquiry cannot conceal any older unresolved instruction.
+        row=self.new_turn('状态如何？','当前服务运行正常。需要更多细节吗？',key='pure-later')
+        automatic(self.service.followups,'s',self.now)
+        self.assertEqual(self.store.read('followup_turn',row['id'])['disposition'],'no_commitment')
+        self.assertEqual(snapshot(self.home,now=self.now)['due_total'],1)
+
+    def test_plain_inquiries_remain_supported_without_topic_wildcards(self):
+        for i,text in enumerate(['What is the status?', "What's the status?", 'WHAT IS THE CURRENT STATUS?',
+                                 '状态如何？', '现在状态如何？', '目前状态如何？', '什么版本？', '几点了？']):
+            row=self.new_turn(text,'Current status is available. Would you like details?',key='pure'+str(i))
+            automatic(self.service.followups,'s',self.now)
+            self.assertEqual(self.store.read('followup_turn',row['id'])['disposition'],'no_commitment')
+        self.assertEqual(self.store.goals(),[])

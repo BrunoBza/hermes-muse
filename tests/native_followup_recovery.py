@@ -122,7 +122,7 @@ def turn(key,text,answer):
     invoke_hook('on_session_end',session_id='origin',turn_id=key,completed=True,failed=False,interrupted=False)
 
 reset_projection()
-turn('inquiry','How is the other service?','It is healthy. Would you like details?')
+turn('inquiry','What is the status?','It is healthy. Would you like details?')
 assert rt.store.read('followup_turn',f.digest('origin:inquiry'))['disposition']=='no_commitment'
 fu=rt.store.goal('fixture')[0]['followup'];assert fu['delivery_state']=='unknown' and fu['delivery_basis']['kind']=='reply'
 reset_projection()
@@ -151,9 +151,31 @@ g=rt.store.goal('fixture')[0]
 call({'kind':'reconcile','mode':'apply','id':'fixture','object_kind':'goal','expected_revision':content.revision(view.canonical(g)),'request_id':'project-reviewed'})
 assert not rt.store.all('notification')
 assert f.snapshot(home)['due_total']==0
+# A status-looking suffix cannot retire mixed instructions. No semantic review is issued.
+reset_projection()
+mixed_inputs = [
+    '放弃 fixture，状态如何？', '状态如何？放弃 fixture',
+    'fixture先搁置，状态如何？', '状态如何，fixture改成只读？',
+    '状态如何？不做fixture了。', 'Abandon fixture，状态如何？',
+    '状态如何？ Drop fixture.', 'What is the status? Shelve fixture.',
+    'Forget fixture, what is the status?', 'How is fixture if we abandon it?',
+    'What is the status?\n暂停 fixture', 'How is the other service?',
+]
+for i,text in enumerate(mixed_inputs):
+    key='mixed-'+str(i)
+    turn(key,text,'当前结果已记录。是否需要详细信息？' if i%2==0 else 'Current result is recorded.')
+    row=rt.store.read('followup_turn',f.digest('origin:'+key));g=rt.store.goal('fixture')[0]
+    assert row['disposition']=='pending' and not row.get('unrelated_goals'), (text,row)
+    assert g['status']=='active' and not g['followup'].get('delivery_basis'), (text,g)
+    assert f.snapshot(home)['due_total']==1, text
+for i,text in enumerate(['状态如何？','What is the status?','目前状态如何？']):
+    key='pure-'+str(i);turn(key,text,'Services are running. Would you like more detail?')
+    assert rt.store.read('followup_turn',f.digest('origin:'+key))['disposition']=='no_commitment'
+    assert f.snapshot(home)['due_total']==1  # older mixed instructions still hold
 native.close();rt.close()
 print(json.dumps({'ok':True,'native_completed_interrupted_failed_missing':True,'corrupt_durable_unknown':True,
                  'negative_and_mention_do_not_handoff':True,'explicit_reviewed_handoff_replay':True,
                  'unrelated_finished_inquiry_unblocks':True,'related_input_blocks':True,'scoped_semantic_review':True,
                  'duplicate_replay_rollback':True,'dry_run_byte_identical':True,'scope_child_protected':True,
+                 'mixed_input_cases':len(mixed_inputs),'pure_inquiry_cases':3,'older_instructions_still_block':True,
                  'model_calls':0,'sends':0}))
