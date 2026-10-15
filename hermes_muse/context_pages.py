@@ -39,7 +39,20 @@ def signal_refs(store, after, through, db=None):
     rows = sorted((r for r in (store.rows(db, 'signal') if db is not None else store.all('signal')) if after < r['created'] <= through
                    and not is_background_message(r.get('text'))), key=lambda r: (r['created'], r['id']))
     return [{'id': r['id'], 'created': r['created'], 'revision': revision(canonical(r)),
-             'total_chars': len(r['text'])} for r in rows]
+             'total_chars': None if r.get('truncated') else len(r['text']),
+             'excerpt_chars': len(r['text']) if r.get('truncated') else None, 'requires_original': bool(r.get('truncated'))} for r in rows]
+
+
+def original_signal(service, row):
+    # Legacy inbox rows have no native message ID. Correlate narrowly or fail closed.
+    state = service.host.conversation(row['session_id'], row['created'] - 300)
+    matches = [m for m in state.get('messages', []) if m.get('role') == 'user'
+               and m.get('text', '').startswith(row['text'])
+               and abs((m.get('at') or 0) - row['created']) <= 300]
+    if not state.get('available') or len(matches) != 1:
+        raise DomainError('source_unavailable', 'Truncated signal needs one matching original private user message; missing/ambiguous evidence cannot advance the checkpoint')
+    message = matches[0]
+    return message['text'], {'message_id': message['id'], 'revision': revision(canonical(message)), 'total_chars': len(message['text'])}
 
 
 def signals(service, data):
@@ -72,14 +85,23 @@ def signals(service, data):
         if not ref:
             raise DomainError('permission_denied', 'Signal is outside this review window')
         row = store.get(db, 'signal', ref['id'])
+        text = row['text']
+        if ref.get('requires_original'):
+            text, original = original_signal(service, row)
+            old = window.get('originals', {}).get(ref['id'])
+            if old and old != original:
+                raise DomainError('revision_conflict', 'Original signal changed; preserve partial work and reopen its review window')
+            window.setdefault('originals', {})[ref['id']] = original
+        else:
+            original = {'revision': ref['revision'], 'total_chars': len(text)}
         offset, length = data.get('offset', 0), data.get('length', 12000)
-        if type(offset) is not int or not 0 <= offset <= len(row['text']) or type(length) is not int or not 1 <= length <= 24000:
+        if type(offset) is not int or not 0 <= offset <= len(text) or type(length) is not int or not 1 <= length <= 24000:
             raise DomainError('invalid_argument', 'Use offset within body and length 1..24000')
-        end = min(len(row['text']), offset + length)
+        end = min(len(text), offset + length)
         window['served'][ref['id']] = _merge(window['served'].get(ref['id'], []) + [[offset, end]])
         store.put(db, 'review_window', token, window)
-        return {**base, **ref, 'session_id': row['session_id'], 'body': row['text'][offset:end],
-                'offset': offset, 'next_offset': end if end < len(row['text']) else None}
+        return {**base, **ref, **original, 'session_id': row['session_id'], 'body': text[offset:end],
+                'offset': offset, 'next_offset': end if end < len(text) else None}
 
 
 def check_review(service, data, db, old, up_to, through):
@@ -92,7 +114,16 @@ def check_review(service, data, db, old, up_to, through):
     if old < row['after'] or signal_refs(service.store, row['after'], through, db) != row['refs']:
         raise DomainError('revision_conflict', 'Signal window changed; reopen from the current checkpoint')
     for ref in row['refs']:
-        if old < ref['created'] <= up_to and ref['total_chars'] and row['served'].get(ref['id']) != [[0, ref['total_chars']]]:
+        if not old < ref['created'] <= up_to:
+            continue
+        count = ref['total_chars']
+        if ref.get('requires_original'):
+            signal = service.store.get(db, 'signal', ref['id'])
+            _, original = original_signal(service, signal)
+            if row.get('originals', {}).get(ref['id']) != original:
+                raise DomainError('permission_denied', 'Original long signal has not been fully read in this window')
+            count = original['total_chars']
+        if count and row['served'].get(ref['id']) != [[0, count]]:
             raise DomainError('permission_denied', 'Checkpoint skips unread signal evidence: ' + ref['id'])
 
 

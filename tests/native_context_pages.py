@@ -26,6 +26,9 @@ def worker(home):
     native=SessionDB(db_path=home/'state.db');native.create_session('origin',source='cli',chat_type='private')
     native.append_message('origin','user','Correct the synthetic Feed arithmetic; maintain notes.')
     invoke_hook('pre_llm_call',session_id='origin',turn_id='user-repair',platform='cli',user_message='Correct the synthetic Feed arithmetic; maintain notes.')
+    long_user = 'Long native user message: ' + 'Evidence ' * 5000
+    native.append_message('origin','user',long_user)
+    invoke_hook('pre_llm_call',session_id='origin',turn_id='long-user',platform='cli',user_message=long_user)
     now=time.time();rt.service.clock=lambda:now
     def call(action,data=None,ok=True,task=None):
         raw=handle_function_call('muse_manage',{'action':action,'data':data or {}},session_id='origin',turn_id='user-repair',task_id=task,enabled_toolsets=['muse'])
@@ -56,11 +59,16 @@ def worker(home):
     assert call('review_complete',cp,ok=False,task=task)['code']=='permission_denied'
     while True:
         for row in page['items']:
-            text=call('context',{'section':'signals','job':'memory-upkeep','window':window,'id':row['id']},task=task)
-            assert text['next_offset'] is None;seen.append(row['id'])
+            offset=0;body=''
+            while offset is not None:
+                text=call('context',{'section':'signals','job':'memory-upkeep','window':window,'id':row['id'],'offset':offset},task=task)
+                body+=text['body'];offset=text['next_offset']
+            if row['id']=='long-user':
+                assert row['requires_original'] and body==long_user and text['message_id']
+            seen.append(row['id'])
         if not page['next_cursor']:break
         page=call('context',{'section':'signals','job':'memory-upkeep','window':window,'limit':41,'cursor':page['next_cursor']},task=task)
-    assert len(seen)==len(set(seen))==551
+    assert len(seen)==len(set(seen))==552
     now+=1;rt.service.signal('later','origin','Concurrent later signal')
     assert call('review_complete',cp,task=task)['complete']
     assert call('context',{'section':'signals','job':'memory-upkeep'},task=task)['total']==1
@@ -111,7 +119,7 @@ def worker(home):
     old=call('followup_update',{'kind':'due','offset':0})
     rt.store.write('followup_receipt','late',{'id':'late','intent_id':None,'session_id':'origin','observed_at':now,'native_status':'unknown'})
     assert call('followup_update',{'kind':'due','offset':old['next_offset'],'snapshot_revision':old['snapshot_revision']},ok=False)['code']=='revision_conflict' 
-    print(json.dumps({'native_large_context':'PASS','signals':551,'source_checks':400,'orphan_pages':32,'real_registry_hooks':True,'child_write_denied':True,'scope_mismatch_denied':True,'append_only_history_progress':True,'feed_correction_CAS_replay':True,'finding_absent_creation':True,'notification_partial_then_reviewed':True,'oversized_mutation_receipt':'reference, replay preserved','provider_calls':0,'external_sends':0}))
+    print(json.dumps({'native_large_context':'PASS','signals':552,'native_truncated_signal_full_body':True,'source_checks':400,'orphan_pages':32,'real_registry_hooks':True,'child_write_denied':True,'scope_mismatch_denied':True,'append_only_history_progress':True,'feed_correction_CAS_replay':True,'finding_absent_creation':True,'notification_partial_then_reviewed':True,'oversized_mutation_receipt':'reference, replay preserved','provider_calls':0,'external_sends':0}))
     native.close();rt.close()
 
 

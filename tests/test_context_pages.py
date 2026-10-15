@@ -68,6 +68,24 @@ class ContextPagesTests(unittest.TestCase):
         p=page(self.store,dense,{'revision':dense['revision'],'offset':0},self.now)
         self.assertLess(len(json.dumps(p).encode()),256*1024);self.assertLess(p['next_offset'],12000)
 
+    def test_truncated_signal_requires_original_and_detects_edits(self):
+        original = {'id':1,'role':'user','at':self.now,'text':'x'*45000}
+        self.service.host.conversation=lambda sid,since: {'available':True,'messages':[original]}
+        self.service.signal('long','s',original['text'])
+        self.assertTrue(self.store.read('signal','long')['truncated'])
+        first=context(self.service,{'section':'signals','job':'memory-upkeep'})
+        data={'section':'signals','job':'memory-upkeep','window':first['window'],'id':'long','length':6000}
+        part=context(self.service,data)
+        cp={'job':'memory-upkeep','window':first['window'],'through':first['through'],'up_to':first['through'],'summary':'Reviewed original'}
+        with self.assertRaises(DomainError):self.service.review_complete(cp,require_window=True)
+        while part['next_offset'] is not None:
+            part=context(self.service,{**data,'offset':part['next_offset']})
+        original['text']+='edited suffix'
+        with self.assertRaises(DomainError):self.service.review_complete(cp,require_window=True)
+        self.service.host.conversation=lambda sid,since: {'available':True,'messages':[]}
+        with self.assertRaises(DomainError):context(self.service,data)
+        self.assertEqual(self.store.read('cursor','memory-upkeep',0),0)
+
     def test_large_metadata_and_discovery_are_consumable(self):
         self.store.write('run','huge',{'id':'huge','status':'partial','summary':'x'*500000,'stages':{}})
         view=Views(self.store.home);p=view.read({'kind':'run','id':'huge'})
