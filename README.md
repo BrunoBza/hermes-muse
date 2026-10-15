@@ -309,7 +309,7 @@ Native completion and session-end hooks reconcile proven terminal delegation rec
 Use `followup_update(kind=reconcile, mode=dry_run)` for bounded historical diagnosis, then explicitly authorized per-object apply with the returned revision and request_id. Each apply keeps an existing-store backup and offers CAS-guarded rollback; no bulk DB overwrite or unknown redispatch. Details in the companion followup reference. This source release does not imply installation or production migration.
 
 
-Historical followup binding (0.2.4 candidate, unreleased): the original private parent
+Historical followup binding (0.2.4): the original private parent
 can use `followup_update(kind=rebind,binding=reply|successor)` with current goal
 content revision, request ID and exact native evidence. It preserves the original
 attempt, uses existing repair preimages/rollback, and never confirms transport or

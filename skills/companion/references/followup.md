@@ -87,7 +87,7 @@ For complex input, first `kind=evidence,candidate_id` and read the original user
 
 Historical free-form replies without an explicit handoff review remain due. Read the real final reply and current criteria, then use existing `kind=handoff` only after semantic review that the result actually was handed off. Transport stays unconfirmed. Normal recurring Cron execution is still not automatic goal completion.
 
-### Historical binding (0.2.4 candidate)
+### Historical binding (0.2.4)
 
 Only the original private parent session may use `followup_update(kind=rebind)`;
 Cron/children cannot. Read `content_read(kind=goal,id=...)` first and pass its

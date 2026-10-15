@@ -1,9 +1,9 @@
-# 0.2.4 — candidate (unreleased)
+# 0.2.4 — historical followup rebinding (2026-10-15)
 
 - Enforce exclusive successor ownership from existing goals, retain delivery evidence by rejecting conflicting rebinds, and require strictly later receipt/result timestamps.
 
 - Add parent-only historical reply/successor binding through `followup_update(kind=rebind)` with exact native evidence, CAS, idempotency and repair preimages/conditional rollback.
-- Keep original execution receipts and unknown delivery semantics; no dispatch, automatic delivery inference, production migration or deployment.
+- Keep original execution receipts and unknown delivery semantics; no dispatch, automatic delivery inference or automatic production migration.
 
 # 0.2.3 — followup evidence convergence (2026-10-15)
 
