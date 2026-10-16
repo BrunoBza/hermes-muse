@@ -130,8 +130,16 @@ def ideas(cursor: str | None = None, limit: int = Query(25, ge=1, le=100), selec
 
 
 @router.get("/goals")
-def goals(cursor: str | None = None, limit: int = Query(25, ge=1, le=100), selected_profile: str | None = None):
-    return read({"kind": "goal", "cursor": cursor, "limit": limit}, selected_profile)
+def goals(
+    cursor: str | None = None,
+    limit: int = Query(25, ge=1, le=100),
+    status: str | None = Query(None, pattern="^(open|closed)$"),
+    selected_profile: str | None = None,
+):
+    return read(
+        {"kind": "goal", "cursor": cursor, "limit": limit, "status": status},
+        selected_profile,
+    )
 
 
 @router.get("/goals/{object_id}")

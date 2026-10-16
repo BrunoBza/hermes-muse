@@ -354,6 +354,7 @@ class Views:
             "limit",
             "topic",
             "query",
+            "status",
         }
         if set(data) - allowed:
             raise DomainError(
@@ -369,6 +370,11 @@ class Views:
             limit = data.get("limit", 25)
             if type(limit) is not int or not 1 <= limit <= 100:
                 raise DomainError("invalid_argument", "limit must be 1..100")
+            status = data.get("status")
+            if status is not None and (kind != "goal" or status not in {"open", "closed"}):
+                raise DomainError(
+                    "invalid_argument", "status=open|closed applies only to goals"
+                )
             items = []
             for item in self.keys(kind, key):
                 body, metadata, rev = self.object(
@@ -376,6 +382,8 @@ class Views:
                     key if kind == "goal_file" else item,
                     item if kind == "goal_file" else None,
                 )
+                if status and (metadata.get("status") == "active") != (status == "open"):
+                    continue
                 if data.get("topic") and data["topic"] not in {
                     metadata.get("goal_id"),
                     metadata.get("interest_id"),
@@ -402,11 +410,24 @@ class Views:
                         "rationale",
                         "kind",
                         "session_id",
+                        "updated",
+                        "deadline",
+                        "next_check_at",
+                        "waiting_user",
+                        "blocked",
                     )
                     if k in metadata
                 }
+                if isinstance(metadata.get("sources"), list):
+                    summary["source_count"] = len(metadata["sources"])
+                if kind == "goal" and metadata.get("progress"):
+                    summary["latest_progress"] = dict(metadata["progress"][-1])
                 truncated = any(isinstance(v, str) and len(v) > 512 for v in summary.values())
                 summary = {k: v[:512] if isinstance(v, str) else v for k, v in summary.items()}
+                if "latest_progress" in summary:
+                    text = summary["latest_progress"].get("text")
+                    truncated |= isinstance(text, str) and len(text) > 512
+                    summary["latest_progress"]["text"] = str(text)[:512]
                 items.append(
                     {
                         "summary_truncated": truncated,
@@ -416,9 +437,19 @@ class Views:
                         **summary,
                     }
                 )
-            items.sort(
-                key=lambda r: (-r.get("position", 0), r["id"], r.get("resource", ""))
-            )
+            if kind == "goal":
+                # Needs-you, blocked, in progress; closed goals last, newest first.
+                def goal_order(r):
+                    if r.get("status") != "active":
+                        return (3, -(r.get("updated") or 0), r["id"])
+                    rank = 0 if r.get("waiting_user") else 1 if r.get("blocked") else 2
+                    return (rank, r.get("next_check_at") or 0, r["id"])
+
+                items.sort(key=goal_order)
+            else:
+                items.sort(
+                    key=lambda r: (-r.get("position", 0), r["id"], r.get("resource", ""))
+                )
             snapshot = revision(
                 canonical(
                     [scope, kind, key, data.get("topic"), data.get("query"), items]
@@ -449,8 +480,18 @@ class Views:
                 if end < len(items)
                 else None
             )
+            extra = {}
+            if kind == "idea":
+                # Lets an empty Ideas page say when the generating review last ran.
+                reviews = [
+                    r.get("started") or 0
+                    for r in self.rows("run")
+                    if r.get("job") == "nightly-review"
+                ]
+                extra["last_review_at"] = max(reviews, default=None)
             return {
                 **base,
+                **extra,
                 "items": items[offset:end],
                 "next_cursor": cursor,
                 "snapshot_revision": snapshot,

@@ -19,6 +19,39 @@ class ContextPagesTests(unittest.TestCase):
         self.now = 1800000000
         self.service = Companion(self.store, Host(), lambda: self.now)
 
+    def test_goal_list_projects_state_orders_open_first_and_filters_status(self):
+        self.service.signal('s', 'parent', 'Plan several things')
+        for key in ('quiet', 'wait', 'stuck', 'old'):
+            self.service.goal_create({'id': key, 'title': key.title(), 'description': 'd',
+                                      'completion_criteria': 'c', 'signal_id': 's'})
+        self.service.goal_update({'id': 'wait', 'waiting_user': True, 'progress': 'x' * 600})
+        self.service.goal_update({'id': 'stuck', 'blocked': 'Needs a key'})
+        self.service.goal_update({'id': 'old', 'status': 'done', 'note': 'Finished'})
+        views = Views(self.store.home)
+        order = lambda **q: [r['id'] for r in views.read({'kind': 'goal', **q})['items']]
+        self.assertEqual(order(), ['wait', 'stuck', 'quiet', 'old'])
+        self.assertEqual(order(status='open'), ['wait', 'stuck', 'quiet'])
+        self.assertEqual(order(status='closed'), ['old'])
+        page = views.read({'kind': 'goal', 'status': 'open', 'limit': 2})
+        self.assertEqual(page['total'], 3)
+        rest = views.read({'kind': 'goal', 'status': 'open', 'limit': 2, 'cursor': page['next_cursor']})
+        self.assertEqual([r['id'] for r in rest['items']], ['quiet'])
+        wait = page['items'][0]
+        self.assertTrue(wait['waiting_user'])
+        self.assertEqual(len(wait['latest_progress']['text']), 512)
+        self.assertTrue(wait['summary_truncated'])
+        self.assertEqual(page['items'][1]['blocked'], 'Needs a key')
+        for bad in ({'kind': 'goal', 'status': 'bogus'}, {'kind': 'feed', 'status': 'open'}):
+            with self.assertRaises(DomainError):
+                views.read(bad)
+
+    def test_idea_list_reports_last_nightly_review(self):
+        views = Views(self.store.home)
+        self.assertIsNone(views.read({'kind': 'idea'})['last_review_at'])
+        with self.store.transaction() as db:
+            self.store.put(db, 'run', 'r1', {'id': 'r1', 'job': 'nightly-review', 'started': 123.0})
+        self.assertEqual(views.read({'kind': 'idea'})['last_review_at'], 123.0)
+
     def test_large_signal_window_ties_append_edit_and_checkpoint(self):
         with self.store.transaction() as db:
             for i in range(220):

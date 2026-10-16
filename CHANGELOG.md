@@ -1,3 +1,8 @@
+# Unreleased — page redesign
+
+- Dashboard/Desktop page: theme-variable styling, shared components, tabs with counts, clickable Feed rows, safe Markdown detail pages with a separate source list, grouped Ideas with an explanatory empty state, and open-first Goals with a folded closed section.
+- Read-only list projections: goals `status=open|closed` filter, state/time/latest-progress fields and open-first ordering; ideas `last_review_at`; feed/idea `source_count`.
+
 # 0.3.0 — simple goals (2026-10-16)
 
 - Replace execution/result/delivery followup state machines with active/done/cancelled goals, optional owner handles, short due summaries and one optional integer write revision.
