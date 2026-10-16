@@ -1,7 +1,7 @@
 import React from 'react';
 import {host, useValue, ROUTES_AREA, SIDEBAR_NAV_AREA} from '@hermes/plugin-sdk';
 const MUSE_CSS = `
-.muse-root{--muse-fg:var(--color-foreground,var(--dt-foreground,currentColor));--muse-card:color-mix(in srgb,var(--muse-fg) 4%,transparent);--muse-soft:color-mix(in srgb,var(--muse-fg) 80%,transparent);--muse-muted:color-mix(in srgb,var(--muse-fg) 62%,transparent);--muse-border:var(--color-border,var(--dt-border,color-mix(in srgb,currentColor 18%,transparent)));--muse-accent:var(--color-primary,var(--dt-primary,currentColor));--muse-accent-fg:var(--color-primary-foreground,var(--dt-primary-foreground,Canvas));--muse-tint:color-mix(in srgb,var(--muse-accent) 16%,transparent);--muse-ring:var(--color-ring,var(--dt-ring,currentColor));--muse-danger:var(--color-destructive,var(--dt-destructive,currentColor));--muse-warn:var(--color-warning,var(--dt-warning,currentColor));--muse-ok:var(--color-success,var(--dt-success,currentColor));--muse-hover:color-mix(in srgb,var(--muse-fg) 7%,transparent);--muse-radius:var(--radius-lg,var(--theme-radius,8px));--muse-ctl:36px;box-sizing:border-box;width:100%;max-width:880px;margin:0 auto;padding:clamp(16px,4vw,24px);font:inherit;line-height:1.55;color:var(--muse-fg);overflow-wrap:anywhere;word-break:break-word}
+.muse-root{--muse-fg:var(--color-foreground,var(--dt-foreground,currentColor));--muse-card:color-mix(in srgb,var(--muse-fg) 4%,transparent);--muse-soft:color-mix(in srgb,var(--muse-fg) 86%,transparent);--muse-muted:color-mix(in srgb,var(--muse-fg) 70%,transparent);--muse-border:var(--color-border,var(--dt-border,color-mix(in srgb,currentColor 18%,transparent)));--muse-accent:var(--color-primary,var(--dt-primary,currentColor));--muse-accent-fg:var(--color-primary-foreground,var(--dt-primary-foreground,Canvas));--muse-tint:color-mix(in srgb,var(--muse-accent) 16%,transparent);--muse-ring:var(--color-ring,var(--dt-ring,currentColor));--muse-danger:var(--color-destructive,var(--dt-destructive,currentColor));--muse-warn:var(--color-warning,var(--dt-warning,currentColor));--muse-ok:var(--color-success,var(--dt-success,currentColor));--muse-hover:color-mix(in srgb,var(--muse-fg) 7%,transparent);--muse-radius:var(--radius-lg,var(--theme-radius,8px));--muse-ctl:36px;box-sizing:border-box;width:100%;max-width:880px;margin:0 auto;padding:clamp(16px,4vw,24px);font:inherit;line-height:1.55;color:var(--muse-fg);overflow-wrap:anywhere;word-break:break-word}
 .muse-root *,.muse-root *::before,.muse-root *::after{box-sizing:border-box}
 .muse-root :where(button,input,select){font:inherit;color:inherit}
 .muse-root :focus-visible{outline:2px solid var(--muse-ring);outline-offset:2px}
@@ -10,18 +10,20 @@ const MUSE_CSS = `
 .muse-title{margin:0;font-size:1.5rem;line-height:1.3;font-weight:700}
 .muse-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;color:var(--muse-muted);font-size:.85rem}
 .muse-profile{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-.muse-pill{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--muse-border);border-radius:999px;color:var(--muse-muted);font-size:.75rem;white-space:nowrap}
+.muse-profile>*{margin:0}
+.muse-pill{display:inline-flex;align-items:center;height:22px;line-height:1;padding:0 10px;border:1px solid var(--muse-border);border-radius:999px;color:var(--muse-muted);font-size:.75rem;white-space:nowrap}
 .muse-select,.muse-input{height:var(--muse-ctl);padding:0 12px;border:1px solid var(--muse-border);border-radius:var(--muse-radius);background:var(--muse-card);max-width:100%}
 .muse-search{position:relative;flex:1 1 220px;min-width:0;display:block}
 .muse-search svg{position:absolute;left:12px;top:50%;width:16px;height:16px;margin-top:-8px;color:var(--muse-muted);pointer-events:none}
 .muse-search .muse-input{width:100%;padding-left:36px}
+.muse-input::placeholder{color:var(--muse-muted);opacity:1}
 .muse-tabs{display:flex;flex-wrap:wrap;gap:2px;margin:16px 0;padding:2px;border:1px solid var(--muse-border);border-radius:calc(var(--muse-radius) + 2px);width:fit-content;max-width:100%}
 .muse-tab,.muse-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--muse-ctl);padding:0 14px;border:1px solid transparent;border-radius:var(--muse-radius);background:transparent;cursor:pointer}
-.muse-tab{height:30px;color:var(--muse-muted)}
+.muse-tab{height:30px;gap:6px;color:var(--muse-muted)}
 .muse-tab:hover{background:var(--muse-hover);color:var(--muse-fg)}
 .muse-tab[aria-pressed=true]{background:var(--muse-tint);color:var(--muse-accent);font-weight:600}
 .muse-count{font-size:.72rem;font-weight:400;color:var(--muse-muted);font-variant-numeric:tabular-nums}
-.muse-tab[aria-pressed=true] .muse-count{color:inherit;opacity:.8}
+.muse-tab[aria-pressed=true] .muse-count{color:var(--muse-accent)}
 .muse-btn:hover:not(:disabled){background:var(--muse-hover)}
 .muse-btn.primary{background:var(--muse-accent);color:var(--muse-accent-fg)}
 .muse-btn.primary:hover:not(:disabled){background:var(--muse-accent);filter:brightness(1.1)}
@@ -44,17 +46,18 @@ const MUSE_CSS = `
 .muse-row-text.faint{color:var(--muse-muted)}
 .muse-row-meta{display:block;margin-top:6px;color:var(--muse-muted);font-size:.8rem;min-height:1.2em}
 .muse-slot{display:inline-block;min-width:12ch}
-.muse-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--muse-border);border-radius:999px;font-size:.75rem;font-weight:600;white-space:nowrap;color:var(--muse-muted)}
+.muse-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--muse-border);border-radius:999px;font-size:.75rem;font-weight:600;white-space:nowrap;color:var(--muse-soft)}
 .muse-badge.warn{background:var(--muse-warn);border-color:var(--muse-warn);color:var(--muse-accent-fg)}
 .muse-badge.danger{background:var(--muse-danger);border-color:var(--muse-danger);color:var(--muse-accent-fg)}
 .muse-badge.ok{color:var(--muse-ok);border-color:currentColor}
 .muse-sect,.muse-fold{display:flex;align-items:center;gap:8px;width:100%;min-height:var(--muse-ctl);margin:0 0 8px;padding:0 8px;font-weight:600;font-size:.95rem}
-.muse-fold{margin:24px 0 0;padding:0 12px;border:1px solid var(--muse-border);border-radius:var(--muse-radius);background:var(--muse-card);cursor:pointer;text-align:left}
+.muse-fold{margin:24px 0 0;padding:0 7px;border:1px solid var(--muse-border);border-radius:var(--muse-radius);background:var(--muse-card);cursor:pointer;text-align:left}
 .muse-fold:hover{background:var(--muse-hover)}
 .muse-fold[aria-expanded=true]{border-bottom-left-radius:0;border-bottom-right-radius:0}
 .muse-fold svg{width:16px;height:16px;flex:none;transition:transform .15s}
 .muse-fold[aria-expanded=true] svg{transform:rotate(90deg)}
 .muse-fold .muse-hint{margin-left:auto;font-weight:400;font-size:.8rem;color:var(--muse-muted)}
+.muse-fold svg{margin-left:4px}
 .muse-card{margin:0 0 16px;padding:4px 16px;border:1px solid var(--muse-border);border-radius:calc(var(--muse-radius) + 2px);background:var(--muse-card)}
 .muse-card-head{margin:12px 0 0;font-size:.95rem;font-weight:600;text-transform:none;letter-spacing:normal}
 .muse-for{display:block;margin-bottom:2px;color:var(--muse-muted);font-size:.8rem}
@@ -345,7 +348,7 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
     };
     const goalRow = (g, i) => {
       const [label, tone] = goalState(g), isOpen = g.status === 'active';
-      const meta = isOpen ? [h('span', {key:'d', className:'muse-slot'}, g.deadline ? 'Due ' + museTime(g.deadline) + ' ·' : ''), g.next_check_at ? ' Next check ' + museTime(g.next_check_at, true) : ''] :
+      const meta = isOpen ? [h('span', {key:'d', className:'muse-slot'}, 'Due ' + (g.deadline ? museTime(g.deadline) : '—') + ' ·'), g.next_check_at ? ' Next check ' + museTime(g.next_check_at, true) : ''] :
         (g.status === 'done' ? 'Completed ' : 'Cancelled ') + museTime(g.updated);
       const text = g.blocked ? 'Blocked: ' + g.blocked : g.latest_progress ? 'Latest: ' + g.latest_progress.text : 'No updates yet';
       return row(g, i, badge(label, tone), text, meta, ()=>open(g), {one:true, dim:!isOpen, faint:!g.blocked && !g.latest_progress});
@@ -400,7 +403,7 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
               h('span', {className:'muse-row-title'}, item.title),
               h('span', {className:'muse-row-text'}, item.rationale || item.why),
               h('span', {className:'muse-row-meta'}, item.source_count ? plural(item.source_count, 'source') : ''),
-              h('div', {className:'muse-idea-actions'},
+              (item.goal_id || draft) && h('div', {className:'muse-idea-actions'},
                 item.goal_id && button('Explore topic',()=>{setTab('feed');setTopic(item.goal_id);setTopicLabel(group.name);}),
                 draft && button('Discuss idea in chat',()=>draft(item,scope)),
                 draft && button('Accept idea in chat',()=>draft(item,scope,'accept'),false,'primary')))));
@@ -411,8 +414,8 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
         currentPage.items.length === 0 ? empty('No open goals', 'Goals you agree on with Muse appear here while they are in progress.') :
           h('ul', {className:'muse-list', 'aria-label':'Open goals'}, ...currentPage.items.map(goalRow)),
         h('button', {type:'button', className:'muse-fold', 'aria-expanded':closedOpen, onClick:()=>{const next=!closedOpen;setClosedOpen(next);if(next&&!closed)loadClosed();}},
-          icon([h('path',{key:'p',d:'M6 3l5 5-5 5'})]), h('span',null,'Done and cancelled'), counts.closed !== undefined ? h('span',{className:'muse-count'},counts.closed) : null,
-          h('span', {className:'muse-hint'}, closedOpen ? 'Hide' : 'Show')),
+          h('span',null,'Done and cancelled'), counts.closed !== undefined ? h('span',{className:'muse-count'},counts.closed) : null,
+          h('span', {className:'muse-hint'}, closedOpen ? 'Hide' : 'Show'), icon([h('path',{key:'p',d:'M6 3l5 5-5 5'})])),
         closedOpen && currentClosed && (currentClosed.items.length === 0 ? empty('Nothing here yet', 'Completed and cancelled goals will be listed here.') :
           h('ul', {className:'muse-list', 'aria-label':'Closed goals'}, ...currentClosed.items.map(goalRow))),
         closedOpen && currentClosed?.next_cursor && button('Load more closed goals',()=>loadClosed(currentClosed.next_cursor),busy,'text'));
