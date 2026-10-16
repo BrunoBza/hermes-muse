@@ -56,7 +56,6 @@ const MUSE_CSS = `
 .muse-row-text.one{-webkit-line-clamp:1}
 .muse-row-text.faint{color:var(--muse-muted)}
 .muse-row-meta{display:block;margin-top:6px;color:var(--muse-muted);font-size:.8rem;min-height:1.2em}
-.muse-slot{display:inline-block;min-width:12ch}
 .muse-badge{display:inline-flex;align-items:center;height:22px;padding:0 10px;border:1px solid var(--muse-border);border-radius:999px;font-size:.75rem;font-weight:600;white-space:nowrap;color:var(--muse-soft)}
 .muse-badge.warn{background:var(--muse-warn);border-color:var(--muse-warn);color:var(--muse-accent-fg)}
 .muse-badge.danger{background:var(--muse-danger);border-color:var(--muse-danger);color:var(--muse-accent-fg)}
@@ -74,7 +73,7 @@ const MUSE_CSS = `
 .muse-for{display:block;margin-bottom:2px;color:var(--muse-muted);font-size:.8rem}
 .muse-idea{padding:12px 0;border-bottom:1px solid var(--muse-border)}
 .muse-idea:last-child{border-bottom:0}
-.muse-idea-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:var(--muse-ctl);margin-top:8px}
+.muse-idea-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .muse-empty{margin:24px 0;padding:24px;border:1px dashed var(--muse-border);border-radius:var(--muse-radius);text-align:center;color:var(--muse-soft)}
 .muse-empty strong{display:block;margin-bottom:4px;color:var(--muse-fg)}
 .muse-empty .muse-btn{margin-top:12px}
@@ -359,7 +358,7 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
     };
     const goalRow = (g, i) => {
       const [label, tone] = goalState(g), isOpen = g.status === 'active';
-      const meta = isOpen ? [h('span', {key:'d', className:'muse-slot'}, 'Due ' + (g.deadline ? museTime(g.deadline) : '—') + ' ·'), g.next_check_at ? ' Next check ' + museTime(g.next_check_at, true) : ''] :
+      const meta = isOpen ? [g.next_check_at ? 'Next check ' + museTime(g.next_check_at, true) : '', g.deadline ? (g.next_check_at ? ' · ' : '') + 'Due ' + museTime(g.deadline) : ''] :
         (g.status === 'done' ? 'Completed ' : 'Cancelled ') + museTime(g.updated);
       const text = g.blocked ? 'Blocked: ' + g.blocked : g.latest_progress ? 'Latest: ' + g.latest_progress.text : 'No updates yet';
       return row(g, i, badge(label, tone), text, meta, ()=>open(g), {one:true, dim:!isOpen, faint:!g.blocked && !g.latest_progress});
@@ -413,7 +412,7 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
               single && group.name && h('span', {className:'muse-for'}, 'For: ' + group.name),
               h('span', {className:'muse-row-title'}, item.title),
               h('span', {className:'muse-row-text'}, item.rationale || item.why),
-              h('span', {className:'muse-row-meta'}, item.source_count ? plural(item.source_count, 'source') : ''),
+              item.source_count > 0 && h('span', {className:'muse-row-meta'}, plural(item.source_count, 'source')),
               (item.goal_id || draft) && h('div', {className:'muse-idea-actions'},
                 item.goal_id && button('Explore topic',()=>{setTab('feed');setTopic(item.goal_id);setTopicLabel(group.name);}),
                 draft && button('Discuss idea in chat',()=>draft(item,scope)),
