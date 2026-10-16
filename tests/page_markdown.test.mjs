@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const source = readFileSync(new URL('../ui/page.js', import.meta.url), 'utf8');
-const {museMarkdown, museBody} = new Function(source + '\nreturn {museMarkdown, museBody};')();
+const {museMarkdown, museBody, museSource} = new Function(source + '\nreturn {museMarkdown, museBody, museSource};')();
 const h = (tag, props, ...children) => ({tag, props, children: children.flat(Infinity)});
 const render = text => museMarkdown(h, text);
 const walk = (nodes, found = []) => {
@@ -37,4 +37,19 @@ test('feed body drops the stored title and trailing Sources list only', () => {
   assert.equal(museBody(body, 'T', true), 'Text');
   assert.equal(museBody(body, 'T', false), 'Text\n\n## Sources\n- https://a.test\n- note');
   assert.equal(museBody('Keep\n\n## Sources\nprose here', 'T', true), 'Keep\n\n## Sources\nprose here');
+});
+
+test('a leading H1 that repeats or extends the title is dropped, a different one is kept', () => {
+  assert.equal(museBody('# Standing desk: a comparison\n\nText', 'Standing desk', false), 'Text');
+  assert.equal(museBody('\n# standing  DESK\n\nText', 'Standing desk', false), 'Text');
+  assert.equal(museBody('# Standing desk\n\n# Standing desk\n\nText', 'Standing desk', false), 'Text', 'stored title plus body title');
+  assert.equal(museBody('# Something else entirely\n\nText', 'Standing desk', false), '# Something else entirely\n\nText');
+});
+
+test('sources show domain plus path as a safe link; non-URLs stay text', () => {
+  const [domain, path] = museSource(h, 'https://www.example.com/a/b?q=1', 's');
+  assert.deepEqual([domain.tag, domain.children[0], domain.props.href, domain.props.rel], ['a', 'example.com', 'https://www.example.com/a/b?q=1', 'noopener noreferrer']);
+  assert.equal(path.children[0], ' /a/b?q=1');
+  assert.equal(museSource(h, 'fixture:private-note', 's'), 'fixture:private-note');
+  assert.equal(museSource(h, 'javascript:alert(1)', 's'), 'javascript:alert(1)');
 });

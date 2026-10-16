@@ -213,6 +213,7 @@ hermes plugins remove hermes-muse
 
 ```sh
 python -m unittest discover -s tests -v
+node --test tests/page_markdown.test.mjs
 # 在 Hermes 环境中：
 python tests/native_smoke.py
 hermes plugins validate . --json
@@ -254,7 +255,7 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 
 ## 统一入口与页面
 
-同一个发行包提供 Dashboard/Desktop 页面与纯读 API，保留完整 Feed、主题、点子和目标，浏览不跑模型、不记录阅读进度。Desktop 仅向选定真实原聊天填入草稿，由用户发送后按正常工具授权执行。
+同一个发行包提供 Dashboard/Desktop 页面与纯读 API，保留完整 Feed、主题、点子和目标，浏览不跑模型、不记录阅读进度。Desktop 仅向选定真实原聊天填入草稿，由用户发送后按正常工具授权执行。页面跟随宿主主题，Feed 与目标正文按安全 Markdown 渲染（不解析原始 HTML），未完成目标在上、已完成/已取消折叠在下；点子为空时会说明原因（只有每晚复盘或对话新增后才会出现）。目标接口支持 `status=open|closed`。
 
 所有 Muse 正文使用 content_read/content_write 与对象 ID，不要求模型知道私有路径，也不增加 Docker 的 Muse 挂载。目标使用可选整数 expected_revision；其他受管修改使用对象版本和稳定 request_id；冲突先回读，未知结果先核原执行。原生 memory、SOUL、skills 与 connector 不迁移。40 个动作及字段见 [INTERFACE](docs/INTERFACE.md)。
 
