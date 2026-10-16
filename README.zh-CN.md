@@ -13,6 +13,22 @@
 
 它建立在 Hermes 已有的能力上：记忆、Cron、Skill 和子任务。模型和记忆后端沿用现有配置，提醒默认交给当前 profile 的 Bot Chat，不要求安装 Hindsight、Obsidian 或其他指定服务。本项目与 Meta/Muse 无官方关联，代码和提示词独立编写。
 
+## 插件页面
+
+Muse 在 Hermes 的 Dashboard / Desktop 页面里提供一个入口：选择 profile 后，就能浏览对应的 Feed、Ideas 和 Goals，样式跟随宿主主题。
+
+![Muse 页面总览与 Feed 文章列表](docs/images/muse-dashboard-overview.png)
+*选择 profile 后可浏览、搜索 Feed 文章，也可切换到 Ideas 或 Goals。所有截图均使用演示数据。*
+
+![Muse Feed 文章正文](docs/images/muse-feed-article.png)
+*打开一篇 Feed 文章，可阅读按 Markdown 渲染的正文，来源单独列在下方。*
+
+![Muse Ideas](docs/images/muse-ideas.png)
+*Ideas 按关联的目标分组展示建议，并可回到对应主题。*
+
+![Muse Goals](docs/images/muse-goals.png)
+*Goals 先列出进行中的目标，显示状态、下次检查和最新进展；已完成和已取消的折叠在下方。*
+
 ## 安装
 
 ```sh

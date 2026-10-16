@@ -13,6 +13,22 @@ In practice it looks like this:
 
 It is built on what Hermes already has: memory, Cron, Skills and subagents, with your existing model and memory backend. Reminders go to the current profile's Bot Chat. Hindsight, Obsidian and other named services are optional. This is an independent project, unaffiliated with Meta/Muse; its code and prompts are independently written.
 
+## Plugin pages
+
+Muse's Dashboard and Desktop page lets you choose a profile and browse its Feed, Ideas and Goals inside Hermes. It follows the host theme.
+
+![Muse overview with Feed article list](docs/images/muse-dashboard-overview.png)
+*Choose a profile, browse or search its Feed articles, and switch to Ideas or Goals. All screenshots use demo data.*
+
+![Muse Feed article body](docs/images/muse-feed-article.png)
+*Open a Feed article to read its Markdown-rendered text, with its sources listed below.*
+
+![Muse Ideas](docs/images/muse-ideas.png)
+*Ideas groups suggestions by the goal they relate to and links them back to its topic.*
+
+![Muse Goals](docs/images/muse-goals.png)
+*Goals lists open goals first, with status, next check and latest progress; done and cancelled goals are folded below.*
+
 ## Install
 
 ```sh
