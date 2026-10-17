@@ -1,9 +1,9 @@
-"""Host-authenticated content views and explicit non-default profile lifecycle."""
+"""Host-authenticated read-only content views; profile lifecycle stays with Hermes plugin management."""
 
 import importlib.util
 import sys
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query, Request, Body
+from fastapi import APIRouter, HTTPException, Query, Request
 
 # Dashboard imports this file independently of the CLI plugin package.
 _package = (
@@ -167,14 +167,3 @@ def profiles(request: Request):
     _require_token(request)
     return _admin.profiles()
 
-
-@router.post("/profiles/{name}")
-def manage_profile(name: str, request: Request, data: dict = Body(...)):
-    from hermes_cli.web_server import _require_token
-    _require_token(request)
-    try:
-        return _admin.change(name, data)
-    except _views.DomainError as exc:
-        status = {"permission_denied": 403, "not_found": 404, "revision_conflict": 409,
-                  "outcome_unknown": 503, "source_unavailable": 503}.get(exc.code, 400)
-        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc

@@ -10,7 +10,7 @@ function useScope() {
   return {key:value, profile, label:location.host + ' · ' + (profile || 'Serving profile'), current:()=>key()===value};
 }
 function request(path,scope) { return SDK.fetchJSON('/api/plugins/hermes-muse'+path+(path.includes('?')?'&':'?')+'profile=default&selected_profile='+encodeURIComponent(scope.profile)); }
-const profileAdmin={list:()=>SDK.fetchJSON('/api/plugins/hermes-muse/profiles?profile=default'), change:(name,data)=>SDK.fetchJSON('/api/plugins/hermes-muse/profiles/'+encodeURIComponent(name)+'?profile=default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})};
+const profileAdmin={list:()=>SDK.fetchJSON('/api/plugins/hermes-muse/profiles?profile=default')};
 const MUSE_CSS = `
 .muse-root{--muse-fg:var(--color-foreground,var(--dt-foreground,currentColor));--muse-card:color-mix(in srgb,var(--muse-fg) 4%,transparent);--muse-soft:color-mix(in srgb,var(--muse-fg) 86%,transparent);--muse-muted:color-mix(in srgb,var(--muse-fg) 70%,transparent);--muse-border:var(--color-border,var(--dt-border,color-mix(in srgb,currentColor 18%,transparent)));--muse-accent:var(--color-primary,var(--dt-primary,currentColor));--muse-accent-fg:var(--color-primary-foreground,var(--dt-primary-foreground,Canvas));--muse-tint:color-mix(in srgb,var(--muse-accent) 16%,transparent);--muse-ring:var(--color-ring,var(--dt-ring,currentColor));--muse-danger:var(--color-destructive,var(--dt-destructive,currentColor));--muse-warn:var(--color-warning,var(--dt-warning,currentColor));--muse-ok:var(--color-success,var(--dt-success,currentColor));--muse-hover:color-mix(in srgb,var(--muse-fg) 7%,transparent);--muse-radius:var(--radius-lg,var(--theme-radius,8px));--muse-ctl:36px;box-sizing:border-box;width:100%;max-width:880px;margin:0 auto;padding:clamp(16px,4vw,24px);font:inherit;line-height:1.55;color:var(--muse-fg);overflow-wrap:anywhere;word-break:break-word}
 .muse-root *,.muse-root *::before,.muse-root *::after{box-sizing:border-box}
@@ -229,14 +229,11 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
     const hostScope = useScope();
     const [profiles, setProfiles] = React.useState([]);
     const [selected, setSelected] = React.useState(null);
-    const [managementBusy, setManagementBusy] = React.useState(false);
     const [managementMessage, setManagementMessage] = React.useState('');
-    const [managementVersion, setManagementVersion] = React.useState(0);
     const selectionRef = React.useRef(selected);
     selectionRef.current = selected;
-    const pendingChange = React.useRef(null);
     const selectedRow = profiles.find(row=>row.name===selected);
-    const scope = profileAdmin ? {...hostScope, profile:selected, key:hostScope.key+':'+selected+':'+managementVersion,
+    const scope = profileAdmin ? {...hostScope, profile:selected, key:hostScope.key+':'+selected,
       label:selected ? hostScope.label+' · '+selected : 'Select a profile on this Hermes host',
       current:()=>hostScope.current() && selectionRef.current===selected} : hostScope;
     React.useEffect(()=>{
@@ -245,23 +242,6 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
       profileAdmin.list().then(value=>{if(active)setProfiles(value.profiles);}).catch(e=>{if(active)setManagementMessage(String(e.message||e));});
       return ()=>{active=false;};
     },[hostScope.key]);
-    async function changeProfile(operation) {
-      if (!selectedRow || selectedRow.read_only) return;
-      const target=selected;
-      setManagementBusy(true);setManagementMessage('');
-      if (!pendingChange.current || pendingChange.current.name!==target || pendingChange.current.data.operation!==operation) {
-        pendingChange.current={name:target,data:{operation,expected_revision:selectedRow.revision,request_id:crypto.randomUUID()}};
-      }
-      try {
-        const value=await profileAdmin.change(target,pendingChange.current.data);
-        const list=await profileAdmin.list();
-        if (!hostScope.current()) return;
-        setProfiles(list.profiles);setManagementVersion(n=>n+1);
-        if (selectionRef.current===target) setManagementMessage(value.partial ? 'Preparation is incomplete. Retry to continue the same operation.' : value.restart_required || value.activation?.restart_required ? 'Selection saved. Runtime activation needs attention; existing sessions may retain their previous tools.' : 'Profile updated. Existing conversations keep their current tools until a new session.');
-        if (!value.partial) pendingChange.current=null;
-      } catch(e) { if(hostScope.current())setManagementMessage(String(e.message||e)); }
-      finally {setManagementBusy(false);}
-    }
     const [tab, setTab] = React.useState('feed');
     const [draftQuery, setDraftQuery] = React.useState('');
     const [query, setQuery] = React.useState('');
@@ -431,23 +411,20 @@ function makeMusePage(React, useScope, request, draft, profileAdmin) {
         closedOpen && currentClosed?.next_cursor && button('Load more closed goals',()=>loadClosed(currentClosed.next_cursor),busy,'text'));
     }
     const label = {feed:'Feed', ideas:'Ideas', goals:'Goals'};
-    const state = selectedRow && (selectedRow.read_only ? 'Read-only' : selectedRow.enabled ? 'Enabled' : selectedRow.installed ? 'Disabled' : 'Not installed');
+    const state = selectedRow && (selectedRow.enabled ? 'Enabled' : selectedRow.installed ? 'Disabled' : 'Not installed');
     return h('main', {className:'muse-root'},
       h('style', null, MUSE_CSS),
       h('header', {className:'muse-header'},
         h('h1', {className:'muse-title'}, 'Muse'),
         h('div', {className:'muse-profile'}, ...(profileAdmin ? [
-          h('select',{className:'muse-select','aria-label':'Profile',value:selected||'',disabled:managementBusy,onChange:e=>{setSelected(e.target.value||null);setDraftQuery('');setQuery('');setTopic('');setManagementMessage('');}},
+          h('select',{className:'muse-select','aria-label':'Profile',value:selected||'',onChange:e=>{setSelected(e.target.value||null);setDraftQuery('');setQuery('');setTopic('');setManagementMessage('');}},
             h('option',{value:''},'Choose a profile…'),
             ...profiles.map(row=>h('option',{key:row.name,value:row.name},row.name))),
-          selectedRow && h('span',{className:'muse-pill',title:selectedRow.read_only?'Default is managed by Hermes':state},(selectedRow.version?selectedRow.version+' · ':'')+state)] :
+          selectedRow && h('span',{className:'muse-pill',title:'Managed by Hermes plugin management'},(selectedRow.version?selectedRow.version+' · ':'')+state)] :
           [h('span',{className:'muse-meta'},scope.label)]))),
-      profileAdmin && ((selectedRow && !selectedRow.read_only) || managementMessage || managementBusy) && h('section',{'aria-label':'Muse profiles',className:'muse-admin'},
-        selectedRow && !selectedRow.read_only && h('p',null,button(selectedRow.enabled?'Disable Muse':'Install / enable Muse',()=>changeProfile(selectedRow.enabled?'disable':'enable'),managementBusy,selectedRow.enabled?'secondary':'primary')),
-        selectedRow && !selectedRow.read_only && h('p',{className:'muse-sub'},'Disable retains data and pauses only owned Muse tasks. Enable resumes only tasks paused by this page that are still eligible; user pauses and schedules are preserved.'),
-        managementBusy && h('p',{role:'status'},'Applying the selected profile change…'),
-        managementMessage && h('p',{role:'status'},managementMessage)),
-      profileAdmin && !ready && empty(selectedRow ? 'Muse is not enabled for this profile' : 'No profile selected', selectedRow ? 'Enable Muse above to browse its Feed, Ideas and Goals.' : 'Choose a profile to browse its Feed, Ideas and Goals.'),
+      profileAdmin && managementMessage && h('section',{'aria-label':'Muse profiles',className:'muse-admin'},
+        h('p',{role:'status'},managementMessage)),
+      profileAdmin && !ready && empty(selectedRow ? 'Muse is not enabled for this profile' : 'No profile selected', selectedRow ? 'Install and enable Muse in that profile with Hermes plugin management (hermes -p <profile> plugins), then browse its Feed, Ideas and Goals here.' : 'Choose a profile to browse its Feed, Ideas and Goals.'),
       ready && h('nav', {'aria-label':'Muse sections', className:'muse-tabs'},
         ...['feed','ideas','goals'].map(name => h('button', {key:name, type:'button', className:'muse-tab', 'aria-pressed':tab===name, 'aria-label':label[name], onClick:()=>setTab(name)}, label[name], counts[name] !== undefined && h('span', {className:'muse-count'}, counts[name])))),
       ready && tab === 'feed' && !currentArticle && h('form', {className:'muse-toolbar', onSubmit:e=>{e.preventDefault(); setQuery(draftQuery.trim());}},

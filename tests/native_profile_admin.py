@@ -1,4 +1,4 @@
-"""Actual authenticated host routes and official installer in isolated custom homes."""
+"""Actual authenticated host routes in isolated custom homes: profile selection is read-only."""
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +11,6 @@ def worker(home):
     import shutil
     import hashlib
     from concurrent.futures import ThreadPoolExecutor
-    from unittest.mock import patch
     repo=Path(__file__).resolve().parents[1]
     sys.path[:0]=[str(repo),os.environ['HERMES_SOURCE']]
     (home/'config.yaml').write_text('plugins:\n  enabled: [hermes-muse]\n  isolation: in-process\ntimezone: UTC\n')
@@ -50,42 +49,27 @@ def worker(home):
         r=client.get(base+'/profiles?profile=default',headers=headers)
         assert r.status_code==200,r.text
         return {x['name']:x for x in r.json()['profiles']}
-    def post(name,operation,revision,key):
-        return client.post(base+'/profiles/'+name+'?profile=default',headers=headers,json={'operation':operation,'expected_revision':revision,'request_id':key})
+    def post(name):
+        return client.post(base+'/profiles/'+name+'?profile=default',headers=headers,json={'operation':'enable','expected_revision':'x','request_id':'k'})
     assert client.get(base+'/profiles?profile=default').status_code==401
-    assert client.post(base+'/profiles/cedar?profile=default',json={}).status_code==401
     rows=profiles();assert set(rows)=={'default','cedar','orchid'}
-    assert rows['default']['read_only'] and rows['default']['managed_by']=='Hermes'
+    assert all(r['read_only'] and r['managed_by']=='Hermes' for r in rows.values())
     assert not rows['cedar']['installed'] and not (target/'muse').exists()
-    before=hashes(home/'muse')
-    for op in ('enable','disable','remove'):
-        r=post('default',op,rows['default']['revision'],'forbidden-'+op)
-        assert r.status_code==403,r.text
-    assert hashes(home/'muse')==before
+    before={name:hashes(path) for name,path in (('default',home),('cedar',target),('orchid',other))}
+    # No lifecycle route: the page cannot install, enable or disable Muse in any profile.
+    for name in ('default','cedar','orchid'):
+        assert post(name).status_code in {404,405},name
+    assert not any(r.path.startswith(base+'/profiles/') for r in app.routes if 'POST' in getattr(r,'methods',()))
+    assert {name:hashes(path) for name,path in (('default',home),('cedar',target),('orchid',other))}==before
     assert client.get(base+'/goals?profile=default&selected_profile=cedar',headers=headers).status_code==404
-    original_popen=subprocess.Popen
-    observed=[]
-    def checked_popen(*args,**kwargs):
-        env=kwargs.get('env',{})
-        if env.get('HERMES_PROFILE')=='cedar':
-            assert env.get('OPENAI_API_KEY')!='parent-only-synthetic'
-            assert env.get('HERMES_HOME')==str(target)
-            observed.append(True)
-        return original_popen(*args,**kwargs)
-    with patch.dict(os.environ,{'OPENAI_API_KEY':'parent-only-synthetic'}), patch('subprocess.Popen',side_effect=checked_popen):
-        response=post('cedar','enable',rows['cedar']['revision'],'enable-one')
-    assert observed
-    assert response.status_code==200,response.text
-    assert response.json()['profile']['enabled']
+    # The profile owner installs Muse with Hermes plugin management; the page then reads it.
+    shutil.copytree(source,target/'plugins/hermes-muse',ignore=shutil.ignore_patterns('.git'))
+    (target/'config.yaml').write_text('plugins:\n  enabled: [hermes-muse]\ntimezone: UTC\n')
     with profile_scope(target):
-        jobs=list_jobs(include_disabled=True)
-        assert len(jobs)==7,(len(jobs),jobs)
-        store=Store(target); host=HermesHost(store,target/'plugins/hermes-muse')
-        manifest=host.manifest();identity=manifest['installation_id'];ids=set(manifest['fixed'].values());assert len(ids)==6
-        pauses=sorted(ids);pause_job(pauses[0],reason='Synthetic user pause')
+        store=Store(target); host=HermesHost(store,target/'plugins/hermes-muse');host.initialize()
         service=Companion(store,host);service.signal('fixture','cedar-session','Maintain synthetic goal default-goal')
         service.goal_create(dict(id='default-goal',signal_id='fixture',title='Cedar private fixture',description='Cedar only',completion_criteria='Read'))
-        original={j['id']:{k:j.get(k) for k in ('schedule','deliver','model','workdir')} for j in list_jobs(include_disabled=True)}
+    rows=profiles();assert rows['cedar']['enabled'] and rows['cedar']['read_only']
     # Concurrent profile GETs must not borrow process/global caches or content.
     def get(name):
         r=client.get(base+'/goals/default-goal?profile=default&selected_profile='+name,headers=headers)
@@ -97,27 +81,8 @@ def worker(home):
     assert [v['metadata']['title'] for v in values]==['Default private fixture','Cedar private fixture']*5
     assert os.environ==env_before
     assert all('scope_token' not in value for value in values)
-    rows=profiles(); r=post('cedar','disable',rows['cedar']['revision'],'disable-one');assert r.status_code==200,r.text
-    assert not r.json()['profile']['enabled'] and r.json()['data_retained']
-    with profile_scope(target):
-        after=list_jobs(include_disabled=True)
-        assert all(not j['enabled'] for j in after if j['id'] in ids)
-        assert next(j for j in after if j['id']==user_job['id'])['enabled']
-    assert client.get(base+'/goals?profile=default&selected_profile=cedar',headers=headers).status_code==404
-    rows=profiles();r=post('cedar','enable',rows['cedar']['revision'],'enable-two');assert r.status_code==200,r.text
-    with profile_scope(target):
-        after=list_jobs(include_disabled=True)
-        assert len(after)==7
-        assert host.manifest()['installation_id']==identity and set(host.manifest()['fixed'].values())==ids
-        assert not next(j for j in after if j['id']==pauses[0])['enabled']
-        assert all(j['enabled'] for j in after if j['id']!=pauses[0])
-        assert original=={j['id']:{k:j.get(k) for k in ('schedule','deliver','model','workdir')} for j in after}
-    assert get('cedar')['metadata']['title']=='Cedar private fixture'
-    assert post('cedar','enable',rows['cedar']['revision'],'enable-two').status_code==200
-    assert hashes(other)==protected, {k:(protected.get(k),hashes(other).get(k)) for k in set(protected)|set(hashes(other)) if protected.get(k)!=hashes(other).get(k)}
-    assert get('default')['metadata']['title']=='Default private fixture'
-    print(json.dumps({'profile_admin':'PASS','official_installer':True,'custom_home':True,'default_backend_refusals':3,'six_jobs_preserved':True,'user_job_and_pause_preserved':True,'ids_cadence_targets_preserved':True,'data_retained':True,'concurrent_profile_scope_no_env_mutation':True,'other_profile_unchanged':True,'no_model_calls':True}))
-
+    assert hashes(other)==protected
+    print(json.dumps({'profile_admin':'PASS','lifecycle_route_absent':True,'all_profiles_read_only':True,'custom_home':True,'concurrent_profile_scope_no_env_mutation':True,'other_profile_unchanged':True,'no_model_calls':True}))
 
 if __name__=='__main__':
     assert os.environ.get('TMPDIR')

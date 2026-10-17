@@ -283,7 +283,7 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 
 ## 统一 Dashboard
 
-default 通过 Hermes 原生插件管理安装并启用完整 Muse，作为本机 Dashboard 页面/API 的入口。页面仅列当前宿主已注册 profiles，明确选择后才读取 Feed、点子和目标。default 标注由 Hermes 管理，前后端均拒绝从页面安装、停用或移除它。其他 profile 可明确安装/启用或停用；停用留数据，仅暂停经核实的自有任务，再启用仅恢复本页面暂停且仍有效的任务，保留用户暂停、频率、目标和安装标识。不会批量自动启用或扩展子代理写权限。
+default 通过 Hermes 原生插件管理安装并启用完整 Muse，作为本机 Dashboard 页面/API 的入口。页面仅列当前宿主已注册 profiles，明确选择后才读取 Feed、点子和目标。所有 profile 都只读浏览：页面及其 API 不能在任何 profile（包括本机其他 profile）安装、启用、停用或移除 Muse。要在其他 profile 使用 Muse，请在该 profile 用 Hermes 插件管理安装启用（如 `hermes -p <profile> plugins install …`），页面随后即可读取。页面、API、muse_manage 和子代理都没有跨 profile 管理能力。
 
 terminal.backend=docker 只影响 terminal；Muse 工具及 companion skill 仍由 Hermes 宿主调度，使用同一当前 profile，无须新增挂载、复制或 Docker 路径分支。整个 Hermes 在独立容器/远端 HOME 中运行则是独立安装，同名 profile 不共享数据；页面不管理远端实例。
 
