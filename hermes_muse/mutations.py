@@ -190,6 +190,8 @@ def invoke(runtime, args, kwargs, callback):
                     raise
                 actual = "absent"
             identity = {"source_id": key} if action == "source_check" else {}
+            # The exact read for this object (e.g. kind=notice, not notification) and its current revision string.
+            identity["read"] = {"action": "content_read", "data": {"kind": kind, "id": key}}
             if "expected_revision" not in data:
                 raise DomainError(
                     "revision_required",
@@ -197,10 +199,18 @@ def invoke(runtime, args, kwargs, callback):
                     "(\"absent\" means a new object); the same request_id may be reused because nothing was written.",
                     current_revision=actual, **identity,
                 )
+            if not isinstance(data["expected_revision"], str):
+                raise DomainError(
+                    "invalid_argument",
+                    "expected_revision is the revision string from content_read or a context list row, not the integer "
+                    "_revision; resend with expected_revision set to current_revision.",
+                    current_revision=actual, **identity,
+                )
             if data["expected_revision"] != actual:
                 raise DomainError(
                     "revision_conflict",
-                    "Object changed; read content_read and merge",
+                    "Object changed: reread it with the read call, merge, then resend with a new request_id and "
+                    "expected_revision set to the reread revision.",
                     current_revision=actual, **identity,
                 )
         intent = {

@@ -211,6 +211,14 @@ class CompanionTests(unittest.TestCase):
         self.assertFalse(self.dispatch(unreviewed["id"]))
         self.assertEqual(self.store.read("notification", unreviewed["id"])["delivery_gate"]["blocked_by"], ["conversation_changed_or_unreviewed"])
 
+    def test_resolve_accepts_small_clock_skew_and_iso_time(self):
+        row = self.notice()
+        with self.assertRaisesRegex(ValueError, "within the last 24 hours"):
+            self.service.notification_resolve({"id": row["id"], "verified_at": self.now + 3600, "sources": ["s"], "reason": "r"})
+        ahead = datetime.fromtimestamp(self.now + 30, timezone.utc).astimezone().isoformat()
+        resolved = self.service.notification_resolve({"id": row["id"], "verified_at": ahead, "sources": ["s"], "reason": "r"})
+        self.assertEqual(resolved["status"], "cancelled")
+
     def test_issue_revision_retires_unsent_candidate_but_never_rewrites_sent_history(self):
         first = self.notice("v1", issue_key="case", priority="urgent")
         with self.assertRaises(ValueError):

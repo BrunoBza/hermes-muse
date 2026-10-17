@@ -138,19 +138,18 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
     )
     for alias in ("notification_prepare", "notification_queue", "notification_handoff"):
         assert call(alias, {"id": notice["id"]})["final_response"] == "[SILENT]"
-    call(
-        "notification_resolve",
-        arguments(
-            rt,
-            "notification_resolve",
-            {
-                "id": notice["id"],
-                "verified_at": time.time(),
-                "sources": ["fixture:source"],
-                "reason": "Fixture resolved without sending",
-            },
-        ),
-    )
+    resolve = {"id": notice["id"], "verified_at": time.time() + 30, "sources": ["fixture:source"],
+               "reason": "Fixture resolved without sending", "request_id": "resolve-fixture"}
+    # Missing/integer revisions are answered with the exact kind=notice read and the revision string to send.
+    missing = call("notification_resolve", resolve, ok=False)
+    assert missing["code"] == "revision_required" and missing["read"] == {"action": "content_read", "data": {"kind": "notice", "id": notice["id"]}}, missing
+    current = call("content_read", missing["read"]["data"])["revision"]
+    assert missing["current_revision"] == current, missing
+    integer = call("notification_resolve", {**resolve, "expected_revision": 3}, ok=False)
+    assert integer["code"] == "invalid_argument" and integer["current_revision"] == current, integer
+    assert "Notifications are kind=notice" in call("content_read", {"kind": "notification", "id": notice["id"]}, ok=False)["error"]
+    # verified_at a few seconds ahead of the plugin clock is accepted (same skew as add/refresh).
+    assert call("notification_resolve", {**resolve, "expected_revision": missing["current_revision"]})["status"] == "cancelled"
     scoped = call("content_read", {"kind": "goal", "id": "g"})
     data = {
         "kind": "goal_file",

@@ -364,7 +364,9 @@ class Views:
         scope = self.scope()
         kind, key = data.get("kind"), data.get("id")
         if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}:
-            raise DomainError("invalid_argument", "Unsupported content kind")
+            raise DomainError("invalid_argument", "Unsupported content kind " + repr(kind) + ". Valid kinds: "
+                              + ", ".join(sorted(COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}))
+                              + ". Notifications are kind=notice.")
         base = {"kind": kind, "observed_at": time.time()}
         if key is None or kind == "goal_file" and not data.get("resource"):
             limit = data.get("limit", 25)

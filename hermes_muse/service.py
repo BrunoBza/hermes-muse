@@ -555,8 +555,9 @@ class Companion:
         """Retire an unsent notice after verifying that its source no longer warrants it."""
         key = identifier(data["id"])
         verified = epoch(data["verified_at"])
-        if not self.clock() - DAY <= verified <= self.clock():
-            raise ValueError("Resolution needs recent source verification")
+        # Same 60-second clock skew as notification_add/refresh.
+        if not self.clock() - DAY <= verified <= self.clock() + 60:
+            raise ValueError("Resolution needs recent source verification: verified_at within the last 24 hours (epoch or ISO with timezone)")
         sources = data.get("sources")
         if not isinstance(sources, list) or not sources or any(not isinstance(s, str) or len(s) > 2000 for s in sources):
             raise ValueError("Supply original resolution evidence")
