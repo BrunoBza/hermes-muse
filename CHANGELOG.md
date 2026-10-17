@@ -1,6 +1,11 @@
 # Unreleased — page redesign
 
 - Dashboard/Desktop page: theme-variable styling, shared components, tabs with counts, clickable Feed rows, safe Markdown detail pages with a separate source list, grouped Ideas with an explanatory empty state, and open-first Goals with a folded closed section.
+- Delivery gate: notice review needs only each session's newest 24,000 characters served; a review records each session's newest message and later preparation holds only on newer messages, returning the exact conversation_read calls for that new text. Unavailable unlinked sessions no longer block. A reviewed-relevant notice held for an hour by new messages or an active conversation is released to the remaining gates (quiet hours, allowance, snooze, topic opt-out, dedup).
+- New repeating watches: `N/step` cron terms expand like croniter (`0/5 * * * *` is refused; `0 0/1 * * *` is hourly and allowed).
+- Dashboard: the cross-profile install/enable/disable route and UI are removed; profile selection is read-only for every profile. Install Muse in another profile with Hermes plugin management.
+- Error guidance: missing expected_revision returns revision_required with current_revision (and source_id); request_id errors explain both fields; source_check list rows include source; unknown context sections list valid ones; followups cap limit at 50; duplicate calendar sources explain the merge; calendar_view proposals carry expected_revision; notification_add accepts topic; the tool description puts every argument inside data.
+- Reconcile no longer rewrites unchanged notices (which expired notice list cursors); tools notes accept recipe prose such as "authorization: `tool(...)`"; briefings write the report before optional bookkeeping.
 - Read-only list projections: goals `status=open|closed` filter, state/time/latest-progress fields and open-first ordering; ideas `last_review_at`; feed/idea `source_count`.
 
 # 0.3.0 — simple goals (2026-10-16)
