@@ -9,8 +9,8 @@ def slots(field, high):
         match = re.fullmatch(r"(\*|\d+(?:-\d+)?)(?:/(\d+))?", term)
         if not match:
             raise ValueError("Cannot prove watch spacing; use every 30m")
-        span, step = match.groups()
-        step = int(step or 1)
+        span, raw_step = match.groups()
+        step = int(raw_step or 1)
         if step < 1:
             raise ValueError("Invalid cron step")
         if span == "*":
@@ -18,7 +18,9 @@ def slots(field, high):
         elif "-" in span:
             start, end = map(int, span.split("-"))
         else:
-            start = end = int(span)
+            # croniter reads N/step as N..max by step, not the single value N.
+            start = int(span)
+            end = high if raw_step else start
         if not 0 <= start <= end <= high:
             raise ValueError("Invalid cron range")
         values.update(range(start, end + 1, step))
