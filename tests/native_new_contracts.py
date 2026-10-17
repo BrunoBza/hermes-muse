@@ -280,26 +280,34 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
     attempt = create_execution(watch["id"], source="test")
     mark_execution_running(attempt["id"])
     task = "cron:" + watch["id"] + ":" + attempt["id"]
-    source = call(
-        "source_check",
-        {
-            "source": {
-                "connection": "fixture",
-                "account": "fixture",
-                "resource": "watch",
-            },
-            "started_at": time.time(),
-            "status": "checked",
-            "scope": "fixture",
-            "summary": "Synthetic source read",
-            "expected_resources": ["fixture"],
-            "checked_resources": ["fixture"],
-            "expected_revision": "absent",
-            "request_id": "source",
+    source_args = {
+        "source": {
+            "connection": "fixture",
+            "account": "fixture",
+            "resource": "watch",
         },
-        sid="watch-session",
-        task=task,
-    )
+        "started_at": time.time(),
+        "status": "checked",
+        "scope": "fixture",
+        "summary": "Synthetic source read",
+        "expected_resources": ["fixture"],
+        "checked_resources": ["fixture"],
+        "expected_revision": "absent",
+        "request_id": "source",
+    }
+    # A missing revision is answered with the value to resend, not a content_read detour.
+    missing = call("source_check", {k: v for k, v in source_args.items() if k != "expected_revision"},
+                   ok=False, sid="watch-session", task=task)
+    assert missing["code"] == "revision_required" and missing["current_revision"] == "absent", missing
+    assert missing["source_id"].startswith("source-"), missing
+    no_key = call("source_check", {k: v for k, v in source_args.items() if k != "request_id"},
+                  ok=False, sid="watch-session", task=task)
+    assert "request_id required for source_check" in no_key["error"] and "expected_revision" in no_key["error"], no_key
+    source = call("source_check", source_args, sid="watch-session", task=task)
+    listed = next(r for r in call("context", {"section": "source_check", "limit": 100})["items"] if r["id"] == source["id"])
+    assert listed["source"] == source_args["source"] and listed["revision"], listed
+    unknown = call("context", {"section": "preferences"}, ok=False)
+    assert "Valid sections" in unknown["error"] and "content_read" in unknown["error"], unknown
     key = rt.host.manifest()["jobs"][watch["id"]]["key"]
     reviewed = call(
         "review_complete",

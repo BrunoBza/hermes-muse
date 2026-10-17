@@ -697,6 +697,9 @@ class CompanionTests(unittest.TestCase):
         with patch.dict(sys.modules, {"cron.executions": ledger, "cron.delivery_queue": queue}), patch("hermes_muse.host.profile_scope", lambda home: contextlib.nullcontext()):
             HermesHost(self.store).reconcile()
             self.assertEqual(self.store.read("notification", row["id"])["status"], "transport_queued")
+            revision = self.store.read("notification", row["id"])["_revision"]
+            HermesHost(self.store).reconcile()  # Unchanged status must not expire notice list cursors.
+            self.assertEqual(self.store.read("notification", row["id"])["_revision"], revision)
             queue.get_status = lambda execution_id: {"status": "delivered"}
             HermesHost(self.store).reconcile()
         self.assertEqual(self.store.read("notification", row["id"])["status"], "sent")

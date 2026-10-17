@@ -189,6 +189,16 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(self.service.source_check(check), failed)  # stale concurrent completion
         self.assertEqual(result['availability'], 'observed_busy_only')
 
+    def test_proposed_source_check_carries_current_revision_and_duplicate_explains_merge(self):
+        from hermes_muse.views import Views
+        first = self.view(self.source())['coverage'][0]['source_check']
+        self.assertEqual(first['expected_revision'], 'absent')
+        saved = self.service.source_check(first)
+        again = self.view(self.source())['coverage'][0]['source_check']
+        self.assertEqual(again['expected_revision'], Views(self.store.home).object('source_check', saved['id'])[2])
+        with self.assertRaisesRegex(ValueError, 'merge every calendar'):
+            self.view(self.source(), self.source())
+
     def test_window_checkpoints_do_not_overwrite_legacy_or_each_other(self):
         old = self.service.source_check({'source': {'connection': 'apple', 'account': 'fixture', 'resource': 'calendars:all'},
             'scope': 'Legacy next seven days', 'started_at': self.now.timestamp(), 'status': 'checked',

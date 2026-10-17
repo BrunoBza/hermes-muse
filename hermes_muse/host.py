@@ -309,10 +309,13 @@ class HermesHost:
             else:
                 status = "unknown"  # including partial sends/timeouts: never blindly replay
             row_before_status = row["status"]
+            before = dict(row)
             if status == "failed" and row_before_status == "queued" and not row.get("output_finalized"):
                 row["definitive_not_accepted"] = True
             row.update(status=status, execution_id=execution["id"], delivery_outcome=outcome,
                        delivery_note="Native transport report; not a phone display/read receipt.")
+            if row == before:
+                continue  # Rewriting an unchanged row bumps _revision and expires every notice cursor.
             with self.store.transaction() as db:
                 current = self.store.get(db, "notification", row["id"])
                 if current and current["status"] == row_before_status:

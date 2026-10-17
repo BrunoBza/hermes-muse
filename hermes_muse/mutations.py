@@ -189,11 +189,19 @@ def invoke(runtime, args, kwargs, callback):
                 if exc.code != "not_found":
                     raise
                 actual = "absent"
+            identity = {"source_id": key} if action == "source_check" else {}
+            if "expected_revision" not in data:
+                raise DomainError(
+                    "revision_required",
+                    "expected_revision required: resend this same call with expected_revision set to current_revision "
+                    "(\"absent\" means a new object); the same request_id may be reused because nothing was written.",
+                    current_revision=actual, **identity,
+                )
             if data["expected_revision"] != actual:
                 raise DomainError(
                     "revision_conflict",
                     "Object changed; read content_read and merge",
-                    current_revision=actual,
+                    current_revision=actual, **identity,
                 )
         intent = {
             "signature": signature,

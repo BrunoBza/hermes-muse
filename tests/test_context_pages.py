@@ -82,6 +82,19 @@ class ContextPagesTests(unittest.TestCase):
         row=self.store.read('signal','0');row['text']='Changed';self.store.write('signal','0',row)
         with self.assertRaises(DomainError):context(self.service,{'section':'signals','job':'memory-upkeep','window':token})
 
+    def test_errors_name_valid_sections_and_followups_cap_their_own_limit(self):
+        with self.assertRaises(DomainError) as caught:
+            context(self.service, {'section': 'preferences'})
+        self.assertIn('notice', str(caught.exception));self.assertIn("kind:'preferences'", str(caught.exception))
+        self.assertIn('items', context(self.service, {'section': 'followups', 'limit': 100}))
+
+    def test_tool_recipes_are_not_mistaken_for_credentials(self):
+        from hermes_muse.views import validate_tools_note
+        validate_tools_note('- Inventory/authorization: `mcp__apple_pim__apple_pim(action="status")`')
+        for secret in ('Authorization: Bearer abc123', 'authorization=token abc', 'api_key: abc123'):
+            with self.subTest(secret=secret), self.assertRaises(DomainError):
+                validate_tools_note(secret)
+
     def test_history_append_keeps_prefix_edit_does_not_and_dense_messages_fit(self):
         def state(texts):
             ms=[{'id':i,'text':t,'role':'user','at':self.now} for i,t in enumerate(texts)]

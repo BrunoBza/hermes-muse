@@ -109,7 +109,7 @@ def validate_tools_note(body):
     import ipaddress
 
     if re.search(
-        r"(?i)(password|api[_ -]?key|secret|authorization|access[_ -]?token)\s*[:=]\s*\S+",
+        r"(?i)(password|api[_ -]?key|secret|authorization(?=\s*[:=]\s*(?:bearer|basic|token)\b)|access[_ -]?token)\s*[:=]\s*\S+",
         body,
     ):
         raise DomainError("invalid_argument", "Tools notes cannot contain credentials")
@@ -415,6 +415,7 @@ class Views:
                         "next_check_at",
                         "waiting_user",
                         "blocked",
+                        "source",
                     )
                     if k in metadata
                 }

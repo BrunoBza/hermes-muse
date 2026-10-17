@@ -135,7 +135,8 @@ def context(service, data, *, view=None):
     section = data.get('section', 'overview')
     if section == 'followups':
         from .followup import snapshot
-        return snapshot(service.store.home, now=service.clock(), cursor=data.get('cursor', ''), limit=data.get('limit', 25))
+        # Followup pages hold at most 50 goals; larger requests page with next_cursor.
+        return snapshot(service.store.home, now=service.clock(), cursor=data.get('cursor', ''), limit=min(limit(data), 50))
     if section in COLLECTIONS:
         return views.read({'kind': section, **{k: v for k, v in data.items() if k in {'cursor','limit','id','offset','length','revision','part'}}})
     if section == 'signals':
@@ -147,7 +148,9 @@ def context(service, data, *, view=None):
         result['items'] = [service.conversation_read({'session_id': s['id'], 'descriptor': True}) for s in result['items']]
         return result
     if section != 'overview':
-        raise DomainError('invalid_argument', 'Unknown section; read context without data for available sections')
+        raise DomainError('invalid_argument', f"Unknown section {section!r}. Valid sections: {', '.join((*COLLECTIONS, 'conversations', 'followups', 'signals'))}. "
+                          "Preferences and installation are not sections: content_read {kind:'preferences'|'installation', id:'current'}. "
+                          "Arguments go inside data, e.g. {action:'context', data:{section:'notice', limit:25}}.")
     return {'now': service.clock(), 'job': view,
             'read_semantics': 'Bounded index. Collection pages use content_read revisions; signal windows freeze through and record served ranges.',
             'sections': {k: {'action': 'context', 'data': {'section': k, 'limit': 25}} for k in (*COLLECTIONS, 'conversations', 'followups')},

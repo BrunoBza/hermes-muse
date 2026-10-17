@@ -299,8 +299,10 @@ class Companion:
     @staticmethod
     def unread_pages(states):
         """Exact reads that serve the newest unreviewed text; nothing older is required."""
-        return [{"action": "conversation_read", "data": {"session_id": sid, "revision": v["revision"], "offset": v["next_offset"]}}
-                for sid, v in sorted(states.items()) if v.get("available") and not v.get("complete") and v.get("next_offset") is not None]
+        calls = [{"action": "conversation_read", "data": {"session_id": sid, "revision": v["revision"], "offset": v["next_offset"]}}
+                 for sid, v in sorted(states.items()) if v.get("available") and not v.get("complete") and v.get("next_offset") is not None]
+        # Bounded response; the next review or preparation lists the rest.
+        return {"read": calls[:10], "unread_sessions": len(calls)} if calls else {}
 
     def released(self, row):
         hold = row.get("conversation_hold_since")
@@ -335,7 +337,7 @@ class Companion:
         if unread:
             # Only evidence actually returned to the caller counts as served.
             return {"reviewed": False, "reason": "The newest conversation text has not been read yet. Make exactly these conversation_read calls (follow next_offset until complete), then review again; older history is not required.",
-                    "read": unread}
+                    **unread}
         verdict = data.get("verdict")
         if verdict not in {"relevant", "resolved", "superseded"}:
             raise ValueError("verdict must be relevant, resolved or superseded")
@@ -448,7 +450,20 @@ class Companion:
         return window(self.host.local_now(self.clock()), data.get("mode", "rolling"))
 
     def calendar_view(self, data):
-        return assemble(data, self.host.local_now(self.clock()))
+        from .content_io import DomainError
+        from .views import Views
+        view, views = assemble(data, self.host.local_now(self.clock())), Views(self.store.home)
+        for item in view["coverage"]:
+            # Proposed checks carry the current CAS revision so they can be submitted as-is plus a request_id.
+            with self.store.transaction() as db:
+                key = self.source_identity(item["source_check"], db)[0]
+            try:
+                item["source_check"]["expected_revision"] = views.object("source_check", key)[2]
+            except DomainError as exc:
+                if exc.code != "not_found":
+                    raise
+                item["source_check"]["expected_revision"] = "absent"
+        return view
 
     def source_identity(self, data, db):
         """Resolve the actual write target once for both semantic CAS and mutation."""
@@ -661,7 +676,7 @@ class Companion:
             # may advance coverage on the public preparation path.
             return {"id": key, "status": result["status"], "final_response": result["final_response"],
                     "delivery_gate": result["delivery_gate"],
-                    "read": self.unread_pages(self.conversation_states()),
+                    **self.unread_pages(self.conversation_states()),
                     "instruction": "The conversation has new text since this notice's review. Make the listed conversation_read calls (only the new text), check whether it already covers this matter, call notification_review, then prepare again."}
         result["instruction"] = ("Return final_response as this Cron's final answer. No extra send or Cron." if delivery
                                  else "Saved for the next patrol; no delivery task was created.")

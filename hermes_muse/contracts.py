@@ -16,7 +16,7 @@ FIELDS = {
     "idea_add": "title rationale goal_id sources expires",
     "feedback": "kind id action signal_id until",
     "preferences": "start_hour end_hour ordinary_per_day time_sensitive_per_day blocked_topics feed_brief signal_id",
-    "notification_add": "event_key message rationale sources verified_at expires goal_id interest_id priority priority_reason issue_key source_snapshot supersedes signal_id watch_id final_result",
+    "notification_add": "event_key message rationale sources verified_at expires goal_id interest_id priority priority_reason issue_key source_snapshot supersedes signal_id watch_id final_result topic",
     "notification_refresh": "id verified_at sources message priority priority_reason source_snapshot",
     "notification_review": "id conversation_revisions verdict reason",
     "notification_resolve": "id verified_at sources reason",
@@ -168,9 +168,14 @@ def validate(action, data):
             or not 1 <= len(data["request_id"]) <= 128
         ):
             raise DomainError(
-                "invalid_argument", "request_id required (1..128 characters)"
+                "invalid_argument",
+                f"request_id required for {action}: a new 1..128-character key per logical write "
+                f"(e.g. \"{action}-20261017-mail-icloud\"); reuse it only to replay the identical call."
+                + (" This action also needs expected_revision: the revision string from the object's context list row "
+                   "or content_read, or \"absent\" for a new object." if action in CAS else ""),
             )
-    if action in CAS and "expected_revision" not in data:
+    # Other CAS actions get revision_required with current_revision from mutations.invoke.
+    if action == "forget" and data.get("kind") == "content" and "expected_revision" not in data:
         raise DomainError(
             "revision_required", "Read the object through content_read before updating"
         )

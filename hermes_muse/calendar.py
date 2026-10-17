@@ -166,7 +166,8 @@ def assemble(data, now):
             raise ValueError("Calendar windows need separate rolling-30d/natural-month source resources; preserve legacy checkpoints")
         source_key = tuple(identity[field] for field in sorted(identity))
         if source_key in seen_sources:
-            raise ValueError("Supply one combined inventory per connection/account/resource")
+            raise ValueError("Duplicate source " + json.dumps(identity, ensure_ascii=False) + ": merge every calendar of one "
+                             "connection/account/resource into ONE sources[] entry with one inventory and all its calendars")
         seen_sources.add(source_key)
         title = required_text(source, "title")
         resources, problems, inventory_times = pages(source["inventory"], now, title + " inventory", since)

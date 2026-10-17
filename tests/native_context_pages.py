@@ -76,12 +76,14 @@ def worker(home):
     for i in range(9):native.append_message('origin','assistant','Original evidence '+str(i)+'x'*18000)
     notice=call('notification_add',arguments(rt,'notification_add',{'event_key':'long-history-notice','message':'Synthetic result','sources':['fixture:source'],'rationale':'Synthetic relevance','verified_at':now,'expires':now+3600}))
     blocked=call('notification_review',arguments(rt,'notification_review',{'id':notice['id'],'conversation_revisions':{},'verdict':'relevant','reason':'Evidence not yet read'}))
-    assert not blocked['reviewed'] and blocked['continuation']['data']['section']=='conversations'
+    from hermes_muse.conversation import REVIEW_CHARS
+    assert not blocked['reviewed'] and [r['data']['session_id'] for r in blocked['read']]==['origin']
+    assert blocked['read'][0]['data']['offset']>0  # Only the newest text, not the whole day.
     d=call('conversation_read',{'session_id':'origin'})
     one=call('conversation_read',{'session_id':'origin','revision':d['revision'],'offset':0})
     native.append_message('origin','user','New correction must also be read')
     changed=call('conversation_read',{'session_id':'origin','revision':d['revision'],'offset':one['next_offset']})
-    assert not changed['available'] and changed['next_offset']==one['next_offset']
+    assert not changed['available'] and changed['next_offset']==changed['total_text_chars']-REVIEW_CHARS
     states=conversations(call);assert states['origin']['complete']
     reviewed=call('notification_review',arguments(rt,'notification_review',{'id':notice['id'],'conversation_revisions':{'origin':states['origin']['revision']},'verdict':'relevant','reason':'Read all original and appended evidence'}))
     assert reviewed['reviewed']

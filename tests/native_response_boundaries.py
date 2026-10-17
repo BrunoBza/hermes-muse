@@ -24,7 +24,7 @@ while offset is not None:
     p=call('content_read',{**ref,'offset':offset})['result'];parts.append(p['body']);offset=p['next_offset']
 assert json.loads(''.join(parts))['blocked_topics']==['x'*300000]
 print(json.dumps({'preferences_committed_success_replay':True,'paged_chars':300000}))
-# Seed native private sessions and normal bounded notice; force existing conversation_partial gate.
+# Seed native private sessions and normal bounded notice; force the unreviewed-conversation gate.
 for i in range(1000):
     sid=f'private-{i:04}'
     native.create_session(sid,source='cli',chat_type='private');native.append_message(sid,'user','Private correction')
@@ -33,11 +33,11 @@ notice=call('notification_add',arguments(rt,'notification_add',{'event_key':'hid
 assert not rt.store.all('conversation_window')
 # Reach the persisted gate through the real preparation path; blocked before any dispatch.
 assert rt.service.delivery_text(notice['id'],delivery={'job_id':'fixture-patrol','execution_id':'fixture-attempt'})==''
-assert rt.store.read('notification',notice['id'])['delivery_gate']['blocked_by']==['conversation_partial']
+assert rt.store.read('notification',notice['id'])['delivery_gate']['blocked_by']==['conversation_changed_or_unreviewed']
 assert not any(w['ranges'] for w in rt.store.all('conversation_window'))
 for action in ('notification_prepare','notification_queue','notification_handoff'):
     r=call(action,arguments(rt,action,{'id':notice['id']}))
-    assert r['ok'] and r['result']['continuation']['data']['section']=='conversations',r
+    assert r['ok'] and len(r['result']['read'])==10 and r['result']['unread_sessions']>=1000,r
     assert len(json.dumps(r).encode())<4096
     assert not any(w['ranges'] for w in rt.store.all('conversation_window'))
 descriptors={}
