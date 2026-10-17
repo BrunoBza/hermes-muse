@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from test_companion import prepare, Host
 from hermes_muse.service import Companion
 from hermes_muse.store import digest
-from hermes_muse.conversation import previews, page, PREVIEW_MESSAGES, PREVIEW_CHARS, PAGE_CHARS
+from hermes_muse.conversation import previews, page, PREVIEW_MESSAGES, PREVIEW_CHARS, PAGE_CHARS, REVIEW_CHARS
 from hermes_muse.delegation import dispatch, concurrency_limit
 from hermes_muse.audit import Audit
 
@@ -41,7 +41,7 @@ class CompatibilityTests(unittest.TestCase):
         self.assertLessEqual(sum(len(m['text']) for m in preview['messages']), PREVIEW_CHARS)
         self.assertEqual(preview['messages'][-1]['id'], len(texts))
         self.assertFalse(preview['complete'])
-        self.assertEqual('conversation_partial', self.service.conversation_block({'session_id':'main'}, {'main':preview}))
+        self.assertEqual('conversation_changed_or_unreviewed', self.service.conversation_block({'session_id':'main'}, {'main':preview}))
         found, offset = '', 0
         while offset is not None:
             result = self.service.conversation_read({'session_id':'main','revision':state['revision'],'offset':offset})
@@ -70,7 +70,7 @@ class CompatibilityTests(unittest.TestCase):
     def test_noncontiguous_chunk_cannot_fake_complete_and_partial_read_survives_resume(self):
         state=self.state('s',['A'*40000])
         last=page(self.store,state,{'revision':state['revision'],'offset':36000},self.now)
-        self.assertEqual(last['next_offset'],0);self.assertFalse(last['complete'])  # Points at the first unread offset, not the tail.
+        self.assertEqual(last['next_offset'],40000-REVIEW_CHARS);self.assertFalse(last['complete'])  # First unread offset of the review window, not the tail.
         for off in (0,12000,24000):
             result=page(self.store,state,{'revision':state['revision'],'offset':off},self.now)
         self.assertTrue(result['complete'])

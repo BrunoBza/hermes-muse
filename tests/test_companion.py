@@ -100,7 +100,7 @@ class CompanionTests(unittest.TestCase):
         binding = {"job_id": "patrol", "execution_id": "r", "route": {"deliver": "bot-chat"}}
         blocked = self.service.notification_queue({"id": row["id"]}, binding)
         self.assertEqual(blocked["final_response"], "[SILENT]")
-        self.assertEqual(blocked['continuation']['data']['section'], 'conversations')
+        self.assertEqual(blocked['read'], [{'action': 'conversation_read', 'data': {'session_id': 'session-a', 'revision': 'r1', 'offset': 0}}])
         self.assertFalse(any(w['ranges'] for w in self.store.all('conversation_window')))
         from hermes_muse.conversation import page
         page(self.store, {**snapshot, 'session_id': 'session-a'}, {'revision': 'r1', 'offset': 0}, self.now)
@@ -119,15 +119,97 @@ class CompanionTests(unittest.TestCase):
             "verdict": "relevant", "reason": "No completed answer in the current native history"})
         binding = {"job_id": "patrol", "execution_id": "r", "route": {"deliver": "bot-chat"}}
         self.assertIn(row["message"], self.service.notification_queue({"id": row["id"]}, binding)["final_response"])
-        snapshot["revision"] = "r2"
+        snapshot.update(revision="r2", messages=snapshot["messages"] + [{"id": 2, "text": "Here is the result"}])
         self.assertEqual(self.service.finalize_delivery(binding), "[SILENT]")
         self.assertEqual(self.store.read("budget", "2026-10-08:ordinary"), 0)
         stale = self.service.notification_review({"id": row["id"], "conversation_revisions": {"session-a": "r1"},
             "verdict": "relevant", "reason": "Outdated read"})
         self.assertFalse(stale["reviewed"])
+        self.assertEqual(stale["read"][0]["data"]["offset"], len("Need a result"))  # Only the new text.
+        self.service.conversation_read(stale["read"][0]["data"])
         self.service.notification_review({"id": row["id"], "conversation_revisions": {"session-a": "r2"},
             "verdict": "relevant", "reason": "New message concerns a different issue; this finding still adds value"})
         self.assertTrue(self.dispatch(row["id"]))
+
+    def conversation(self, texts, **sessions):
+        state = {"available": True, "messages": [{"id": n + 1, "role": "user", "text": t, "at": self.now} for n, t in enumerate(texts)]}
+        state["revision"] = str(len(texts))
+        self.host.conversation = lambda sid, since: {**(sessions.get(sid) or state), "session_id": sid}
+        return state
+
+    def review(self, key):
+        for _ in range(20):
+            result = self.service.notification_review({"id": key, "verdict": "relevant", "reason": "Not yet said in the conversation"})
+            if result["reviewed"]:
+                return result
+            for call in result["read"]:
+                offset = call["data"]["offset"]
+                while offset is not None:
+                    offset = self.service.conversation_read({**call["data"], "offset": offset})["next_offset"]
+        self.fail("review never converged")
+
+    def test_busy_history_only_needs_its_newest_text_and_unavailable_sessions_do_not_block(self):
+        from hermes_muse.conversation import REVIEW_CHARS
+        self.conversation(["old " * 25000, "latest question"],
+                          group={"available": False, "error": "Group conversation is outside private companion scope."})
+        self.service.signal("g", "group", "group text")
+        row = self.notice(priority="time_sensitive")
+        first = self.service.notification_review({"id": row["id"], "verdict": "relevant", "reason": "r"})
+        total = 100000 + len("latest question")
+        self.assertEqual(first["read"], [{"action": "conversation_read", "data": {"session_id": "session-a", "revision": "2", "offset": total - REVIEW_CHARS}}])
+        self.assertTrue(self.review(row["id"])["reviewed"])
+        window = self.store.read("conversation_window", __import__("hermes_muse.store", fromlist=["digest"]).digest("session-a"))
+        self.assertEqual(window["ranges"], [[total - REVIEW_CHARS, total]])  # 76k older characters never read.
+        self.assertTrue(self.dispatch(row["id"]))
+
+    def test_new_message_after_review_needs_only_the_new_text(self):
+        state = self.conversation(["x" * 30000])
+        row = self.notice(priority="time_sensitive")
+        self.review(row["id"])
+        state["messages"].append({"id": 2, "role": "user", "text": "unrelated follow-up", "at": self.now})
+        state["revision"] = "2"
+        self.assertFalse(self.dispatch(row["id"]))
+        blocked = self.service.notification_queue({"id": row["id"]})
+        self.assertEqual(blocked["delivery_gate"]["blocked_by"], ["conversation_changed_or_unreviewed"])
+        self.assertEqual([c["data"]["offset"] for c in blocked["read"]], [30000])
+        self.review(row["id"])
+        self.assertTrue(self.dispatch(row["id"]))
+
+    def test_conversation_churn_delays_but_cannot_starve_a_reviewed_notice(self):
+        state = self.conversation(["question"])
+        row = self.notice()
+        def chat(text):
+            self.service.signal(uuid.uuid4().hex, "session-a", text)  # Active user: ordinary notices wait.
+            state["messages"].append({"id": len(state["messages"]) + 1, "role": "user", "text": text, "at": self.now})
+            state["revision"] = str(len(state["messages"]))
+        for _ in range(2):  # Each patrol reviews, then the user writes again before preparation.
+            self.review(row["id"])
+            chat("still chatting")
+            self.assertFalse(self.dispatch(row["id"]))
+            self.now += 1800 - 1
+        self.review(row["id"])
+        chat("still chatting")
+        self.now += 2
+        self.assertTrue(self.dispatch(row["id"]))
+        self.assertEqual(self.store.read("notification", row["id"])["status"], "dispatching")
+
+    def test_starvation_release_keeps_quiet_hours_topic_opt_out_and_requires_a_review(self):
+        state = self.conversation(["question"])
+        quiet, topical, unreviewed = self.notice("quiet"), self.notice("topic", topic="bikes"), self.notice("unreviewed")
+        for row in (quiet, topical):
+            self.review(row["id"])
+        state["messages"].append({"id": 2, "role": "user", "text": "more", "at": self.now})
+        state["revision"] = "2"
+        for row in (quiet, topical, unreviewed):
+            self.assertFalse(self.dispatch(row["id"]))
+        self.now += 3600
+        self.service.preference_update({"start_hour": 14, "blocked_topics": ["bikes"]})
+        self.assertFalse(self.dispatch(quiet["id"]))
+        self.assertEqual(self.store.read("notification", quiet["id"])["delivery_gate"]["blocked_by"], ["quiet_hours"])
+        self.assertFalse(self.dispatch(topical["id"]))
+        self.assertEqual(self.store.read("notification", topical["id"])["status"], "dismissed")
+        self.assertFalse(self.dispatch(unreviewed["id"]))
+        self.assertEqual(self.store.read("notification", unreviewed["id"])["delivery_gate"]["blocked_by"], ["conversation_changed_or_unreviewed"])
 
     def test_issue_revision_retires_unsent_candidate_but_never_rewrites_sent_history(self):
         first = self.notice("v1", issue_key="case", priority="urgent")

@@ -157,4 +157,4 @@ def context(service, data, *, view=None):
                                    'processed_through': service.store.read('cursor', j, 0)} for j in JOBS},
             'preferences_ref': {'action': 'content_read', 'data': {'kind': 'preferences', 'id': 'current'}},
             'installation_ref': {'action': 'content_read', 'data': {'kind': 'installation', 'id': 'current'}},
-            'instruction': 'Follow every section cursor. Read signal bodies before review_complete; no index is completion. Notification review requires all current conversation evidence. Existing followup unknown owners are inspected, never redispatched.'}
+            'instruction': 'Follow every section cursor. Read signal bodies before review_complete; no index is completion. Notification review requires the newest text of each tracked conversation. Existing followup unknown owners are inspected, never redispatched.'}

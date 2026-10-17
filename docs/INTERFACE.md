@@ -21,7 +21,7 @@ Content page revisions and non-goal mutation journals retain their existing boun
 | `preferences` | `start_hour end_hour ordinary_per_day time_sensitive_per_day blocked_topics feed_brief signal_id expected_revision request_id` | Required revision + request ID |
 | `notification_add` | `event_key message rationale sources verified_at expires goal_id interest_id priority priority_reason issue_key source_snapshot supersedes signal_id watch_id final_result expected_revision request_id` | Request ID + natural key |
 | `notification_refresh` | `id verified_at sources message priority priority_reason source_snapshot expected_revision request_id` | Required revision + request ID |
-| `notification_review` | `id conversation_revisions verdict reason expected_revision request_id` | Required revision + request ID |
+| `notification_review` | `id verdict reason expected_revision request_id` (`conversation_revisions` optional, ignored) | Required revision + request ID |
 | `notification_resolve` | `id verified_at sources reason expected_revision request_id` | Required revision + request ID |
 | `notification_prepare` | `id request_id` | Optional replay request ID |
 | `notification_queue` | `id request_id` | Optional replay request ID |

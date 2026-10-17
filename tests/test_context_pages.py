@@ -6,7 +6,7 @@ from test_companion import prepare, Host
 from hermes_muse.service import Companion
 from hermes_muse.context_pages import context
 from hermes_muse.content_io import DomainError
-from hermes_muse.conversation import descriptor, page
+from hermes_muse.conversation import descriptor, page, REVIEW_CHARS
 from hermes_muse.store import digest
 from hermes_muse.views import Views
 
@@ -90,13 +90,13 @@ class ContextPagesTests(unittest.TestCase):
         p=page(self.store,s,{'revision':d['revision'],'offset':0},self.now)
         grown=state(['x'*20000,'y'*20000,'new correction'])
         p=page(self.store,grown,{'revision':s['revision'],'offset':12000},self.now)
-        self.assertFalse(p['available']);self.assertEqual(p['next_offset'],12000)
+        self.assertFalse(p['available']);self.assertEqual(p['next_offset'],40014-REVIEW_CHARS)  # Retained prefix plus review window.
         offset=p['next_offset']
         while offset is not None:
             p=page(self.store,grown,{'revision':grown['revision'],'offset':offset},self.now);offset=p['next_offset']
         self.assertTrue(p['complete'])
         changed=state(['EDIT'+'x'*20000,'y'*20000,'new correction'])
-        self.assertEqual(descriptor(self.store,changed,self.now)['next_offset'],0)
+        self.assertEqual(descriptor(self.store,changed,self.now)['next_offset'],40018-REVIEW_CHARS)
         dense=state(['a']*15000)
         p=page(self.store,dense,{'revision':dense['revision'],'offset':0},self.now)
         self.assertLess(len(json.dumps(p).encode()),256*1024);self.assertLess(p['next_offset'],12000)

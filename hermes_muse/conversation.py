@@ -53,6 +53,8 @@ def read_conversation(home, session_id, since):
 PREVIEW_MESSAGES = 24
 PREVIEW_CHARS = 24000
 PAGE_CHARS = 12000
+# Notice review needs the newest text served, not a busy day's whole history.
+REVIEW_CHARS = 24000
 
 
 def _merge(ranges):
@@ -65,6 +67,20 @@ def _merge(ranges):
         else:
             result.append([lo, hi])
     return result
+
+
+def _gap(ranges, total):
+    """First unserved offset inside the newest REVIEW_CHARS, or None when served."""
+    at = max(0, total - REVIEW_CHARS)
+    for lo, hi in _merge(ranges):
+        if lo <= at < hi:
+            at = hi
+    return at if at < total else None
+
+
+def head(messages):
+    """Fingerprint of the newest message; a different head means new conversation."""
+    return digest(json.dumps(messages[-1], ensure_ascii=False, sort_keys=True)) if messages else None
 
 
 def _coverage(store, state, ranges, now, db=None):
@@ -86,11 +102,11 @@ def _coverage(store, state, ranges, now, db=None):
         covered = _merge(old_ranges + ranges)
         store.put(db, 'conversation_window', key, {'revision': state['revision'], 'ranges': covered,
                   'fingerprints': fingerprints, 'since': state.get('since', previous.get('since', now - 86400)), 'at': now})
-    return total == 0 or covered == [[0, total]]
+    return _gap(covered, total)
 
 
 def previews(store, states, now, db=None, served=True):
-    """Fair bounded preview; complete means this exact revision has been served in full."""
+    """Fair bounded preview; complete means the newest REVIEW_CHARS of this revision were served."""
     result = {}
     share = PREVIEW_CHARS // max(1, len(states))
     for sid, state in states.items():
@@ -113,26 +129,23 @@ def previews(store, states, now, db=None, served=True):
             ranges.append([positions[i], positions[i] + count])
             remaining -= count
         selected.reverse()
-        complete = _coverage(store, state, ranges if served else [], now, db)
-        result[sid] = {**state, 'messages': selected, 'complete': complete,
+        gap = _coverage(store, state, ranges if served else [], now, db)
+        result[sid] = {**state, 'messages': selected, 'complete': gap is None, 'head': head(messages),
                        'preview_complete': len(selected) == len(messages) and all(not m['truncated'] for m in selected),
                        'total_messages': len(messages), 'total_text_chars': at,
-                       'next_offset': None if complete else 0,
-                       'instruction': 'Preview is not full evidence. Use conversation_read with session_id, revision and offset; follow next_offset. Missing/changed evidence blocks task-notice review.'}
+                       'next_offset': gap,
+                       'instruction': 'Preview is not full evidence. Notice review needs the newest text served: conversation_read with session_id, revision and offset=next_offset until complete. Older history stays readable from offset 0.'}
     return result
 
 
 def descriptor(store, state, now):
     if not state.get('available'):
         return {'session_id': state['session_id'], 'available': False, 'complete': False}
-    complete = _coverage(store, state, [], now)
-    row = store.read('conversation_window', digest(state['session_id']), {})
-    ranges = row.get('ranges', [])
-    first_gap = ranges[0][1] if ranges and ranges[0][0] == 0 else 0
+    gap = _coverage(store, state, [], now)
     return {'session_id': state['session_id'], 'available': True, 'revision': state['revision'],
-            'complete': complete, 'total_text_chars': sum(len(m['text']) for m in state['messages']),
-            'next_offset': None if complete else first_gap,
-            'instruction': 'Use conversation_read(session_id,revision,offset=next_offset). On changes, reread this descriptor; unchanged prefixes retain coverage, changed/new text requires reading.'}
+            'complete': gap is None, 'total_text_chars': sum(len(m['text']) for m in state['messages']),
+            'next_offset': gap,
+            'instruction': 'Notice review needs only the newest text: conversation_read(session_id,revision,offset=next_offset) until complete. Unchanged prefixes keep coverage, so after new messages only the new text is unread.'}
 
 
 def page(store, state, data, now, *, record_coverage=True):
@@ -159,7 +172,7 @@ def page(store, state, data, now, *, record_coverage=True):
     from .responses import require_fit
     require_fit({'session_id': state['session_id'], 'revision': state['revision'], 'messages': messages,
                  'offset': offset, 'next_offset': end, 'total_text_chars': total})
-    complete = _coverage(store, state, [[offset, end]], now) if record_coverage else end == total
+    complete = _coverage(store, state, [[offset, end]], now) is None if record_coverage else end == total
     return {'available': True, 'session_id': state['session_id'], 'revision': state['revision'],
             'messages': messages, 'offset': offset, 'next_offset': end if end < total else (descriptor(store, state, now)['next_offset'] if record_coverage and not complete else None),
             'total_text_chars': total, 'complete': complete, 'coverage_recorded': record_coverage,

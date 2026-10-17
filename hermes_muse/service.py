@@ -14,6 +14,9 @@ from .store import DAY, GOVERNANCE_JOBS, bounded, digest, epoch, identifier, is_
 
 DEFAULT_PREFERENCES = {"start_hour": 9, "end_hour": 22, "ordinary_per_day": None,
                        "time_sensitive_per_day": 3, "blocked_topics": [], "feed_brief": ""}
+# A reviewed relevant notice held this long by conversation churn/activity is released
+# to the remaining gates (quiet hours, budget, snooze, topic opt-out, dedup).
+HOLD_RELEASE = 3600
 
 
 class Companion:
@@ -289,28 +292,50 @@ class Companion:
     def conversation_revisions(states):
         return {sid: value["revision"] for sid, value in states.items() if value.get("available") and (value.get("total_messages") or value.get("total_text_chars") or value.get("messages"))}
 
+    @staticmethod
+    def conversation_heads(states):
+        return {sid: value["head"] for sid, value in states.items() if value.get("available") and value.get("head")}
+
+    @staticmethod
+    def unread_pages(states):
+        """Exact reads that serve the newest unreviewed text; nothing older is required."""
+        return [{"action": "conversation_read", "data": {"session_id": sid, "revision": v["revision"], "offset": v["next_offset"]}}
+                for sid, v in sorted(states.items()) if v.get("available") and not v.get("complete") and v.get("next_offset") is not None]
+
+    def released(self, row):
+        hold = row.get("conversation_hold_since")
+        return bool(hold) and self.clock() - hold >= HOLD_RELEASE and (row.get("conversation_review") or {}).get("verdict") == "relevant"
+
     def conversation_block(self, row, states):
         if row.get("session_id") and not states.get(row["session_id"], {}).get("available"):
             return "conversation_unavailable"
-        if any(v.get("complete") is False for v in states.values()):
-            return "conversation_partial"
-        current = self.conversation_revisions(states)
-        if (current or row.get("conversation_review")) and row.get("conversation_review", {}).get("revisions") != current:
+        current = self.conversation_heads(states)
+        review = row.get("conversation_review") or {}
+        seen = review.get("heads")
+        if seen is None:
+            return "conversation_changed_or_unreviewed" if current or review else None
+        # Only messages newer than the reviewed head matter; unread older history does not block.
+        if any(seen.get(sid) != value for sid, value in current.items()) and not self.released(row):
             return "conversation_changed_or_unreviewed"
         return None
 
+    def hold(self, row, reasons):
+        if {"conversation_changed_or_unreviewed", "active_conversation"} & set(reasons) and row.get("conversation_review"):
+            row.setdefault("conversation_hold_since", self.clock())
+
     def notification_review(self, data):
-        """The model judges relevance; code checks that its reviewed history is current."""
+        """The model judges relevance; code checks that the newest conversation text was served."""
         key = identifier(data["id"])
         candidate = self.store.read("notification", key, {})
         states = self.conversation_states()
         if candidate.get("session_id") and not states.get(candidate["session_id"], {}).get("available"):
             raise ValueError("The linked conversation is unavailable; recover its history before reviewing this task notice")
         revisions = self.conversation_revisions(states)
-        if any(v.get("complete") is False for v in states.values()) or data.get("conversation_revisions", {}) != revisions:
+        unread = self.unread_pages(states)
+        if unread:
             # Only evidence actually returned to the caller counts as served.
-            return {"reviewed": False, "reason": "Conversation changed or evidence is partial; read descriptors and every missing conversation_read page before review",
-                    "continuation": {"action": "context", "data": {"section": "conversations", "limit": 25}}}
+            return {"reviewed": False, "reason": "The newest conversation text has not been read yet. Make exactly these conversation_read calls (follow next_offset until complete), then review again; older history is not required.",
+                    "read": unread}
         verdict = data.get("verdict")
         if verdict not in {"relevant", "resolved", "superseded"}:
             raise ValueError("verdict must be relevant, resolved or superseded")
@@ -319,7 +344,8 @@ class Companion:
             row = self.store.get(db, "notification", key)
             if not row or row["status"] not in {"candidate", "pending"}:
                 raise ValueError("Review only unsent candidates; delivered/unknown history is immutable")
-            row["conversation_review"] = {"revisions": revisions, "at": self.clock(), "verdict": verdict, "reason": reason}
+            row["conversation_review"] = {"revisions": revisions, "heads": self.conversation_heads(states),
+                                          "at": self.clock(), "verdict": verdict, "reason": reason}
             if verdict != "relevant":
                 row.update(status="cancelled", resolution={"at": self.clock(), "reason": reason, "basis": "native_conversation"})
                 row.pop("delivery_gate", None)
@@ -630,13 +656,13 @@ class Companion:
             self.delivery_text(key, delivery=delivery)
         result = dict(self.store.read("notification", key))
         result["final_response"] = self.prepared_response(delivery) if delivery else "[SILENT]"
-        if result.get("delivery_gate", {}).get("blocked_by", []) in (["conversation_unavailable"], ["conversation_changed_or_unreviewed"], ["conversation_partial"]):
+        if result.get("delivery_gate", {}).get("blocked_by", []) in (["conversation_unavailable"], ["conversation_changed_or_unreviewed"]):
             # Descriptors do not serve text. Only bounded conversation_read pages
             # may advance coverage on the public preparation path.
             return {"id": key, "status": result["status"], "final_response": result["final_response"],
                     "delivery_gate": result["delivery_gate"],
-                    "continuation": {"action": "context", "data": {"section": "conversations", "limit": 25}},
-                    "instruction": "Read every missing conversation body page, then review relevance and prepare again. This continuation is not served evidence."}
+                    "read": self.unread_pages(self.conversation_states()),
+                    "instruction": "The conversation has new text since this notice's review. Make the listed conversation_read calls (only the new text), check whether it already covers this matter, call notification_review, then prepare again."}
         result["instruction"] = ("Return final_response as this Cron's final answer. No extra send or Cron." if delivery
                                  else "Saved for the next patrol; no delivery task was created.")
         return result
@@ -655,6 +681,7 @@ class Companion:
                     pass
                 elif self.conversation_block(row, states):
                     row.update(status="pending", job_id=None, delivery_gate={"blocked_by": [self.conversation_block(row, states)], "next_eligible_at": None})
+                    self.hold(row, row["delivery_gate"]["blocked_by"])
                 elif not self.owner_valid(row, db):
                     row["status"] = "expired"
                 elif row["topic"] in prefs["blocked_topics"]:
@@ -666,6 +693,7 @@ class Companion:
                     row["delivery_gate"] = self.delivery_gate(row, db, now, prefs, check_budget=False)
                     if row["delivery_gate"]["blocked_by"]:
                         row.update(status="pending", job_id=None)
+                        self.hold(row, row["delivery_gate"]["blocked_by"])
                     elif row["verified_at"] < now - DAY:
                         row.update(status="candidate", job_id=None, needs_reverification=True)
                     else:
@@ -703,7 +731,7 @@ class Companion:
         if eligible > now:
             reasons.append("snoozed")
         limited = row["priority"] in {"ordinary", "time_sensitive"}
-        if row["priority"] == "ordinary":
+        if row["priority"] == "ordinary" and not self.released(row):
             active_until = max((s.get("last_signal", 0) + 900 for s in self.store.rows(db, "session") if s.get("active")), default=0)
             if active_until > now:
                 reasons.append("active_conversation")
@@ -764,11 +792,13 @@ class Companion:
             blocker = self.conversation_block(row, self.conversation_states(db))
             if blocker:
                 row.update(status="pending", job_id=None, delivery_gate={"blocked_by": [blocker], "next_eligible_at": None})
+                self.hold(row, [blocker])
                 self.store.put(db, "notification", key, row)
                 return ""
             row["delivery_gate"] = self.delivery_gate(row, db, now, prefs)
             if row["delivery_gate"]["blocked_by"]:
                 row.update(status="pending", job_id=None)
+                self.hold(row, row["delivery_gate"]["blocked_by"])
                 self.store.put(db, "notification", key, row)
                 return ""
             if delivery:
