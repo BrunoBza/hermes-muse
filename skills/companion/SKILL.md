@@ -1,7 +1,7 @@
 ---
 name: companion
 description: Goals, proactive reminders, calendar views, memory upkeep, Feed and research in the current Hermes profile.
-version: 0.3.1
+version: 0.3.2
 ---
 # Companion
 
@@ -29,6 +29,9 @@ quiet hours, notification review/dedup and actual delivery receipts remain autho
 
 Use review_complete for each job's processed prefix. In Cron, run_complete records
 complete/partial and remaining gaps; index reads are not substantive review.
+At the start of each Muse Cron run, call muse_manage with
+`{"action":"content_read","data":{"kind":"working_lessons","id":"current"}}`
+and follow its pagination before acting. Apply the relevant verified conventions.
 Hourly upkeep owns operation audit; other jobs check their own work. Keep Feed
 silent and return patrol final_response exactly; use [SILENT] after useful checks.
 

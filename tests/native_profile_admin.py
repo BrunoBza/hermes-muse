@@ -28,6 +28,9 @@ def worker(home):
     from hermes_muse.host import HermesHost,profile_scope
     from hermes_muse.service import Companion
     default_store=Store(home); default_host=HermesHost(default_store,source);default_host.initialize()
+    with profile_scope(home):
+        from cron.jobs import list_jobs
+        assert all(j.get("workdir") is None for j in list_jobs(True))
     default_service=Companion(default_store,default_host)
     default_service.signal('fixture','default-session','Maintain synthetic goal default-goal')
     default_service.goal_create(dict(id='default-goal',signal_id='fixture',title='Default private fixture',description='Default only',completion_criteria='Read'))
@@ -67,6 +70,7 @@ def worker(home):
     (target/'config.yaml').write_text('plugins:\n  enabled: [hermes-muse]\ntimezone: UTC\n')
     with profile_scope(target):
         store=Store(target); host=HermesHost(store,target/'plugins/hermes-muse');host.initialize()
+        assert all(j.get("workdir") is None for j in list_jobs(True))
         service=Companion(store,host);service.signal('fixture','cedar-session','Maintain synthetic goal default-goal')
         service.goal_create(dict(id='default-goal',signal_id='fixture',title='Cedar private fixture',description='Cedar only',completion_criteria='Read'))
     rows=profiles();assert rows['cedar']['enabled'] and rows['cedar']['read_only']

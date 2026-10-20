@@ -84,7 +84,7 @@ class HermesHost:
             marker = f"[hermes-muse:{record['installation_id']}:{key}]"
             existing = None
             for job in list_jobs(include_disabled=True):
-                if marker not in job.get("prompt", "") or job.get("workdir") != str(self.store.root):
+                if marker not in job.get("prompt", ""):
                     continue
                 if fixed or job.get("state") not in {"completed", "failed", "cancelled"} and job.get("next_run_at"):
                     existing = job
@@ -94,10 +94,11 @@ class HermesHost:
             if existing:
                 if fixed:
                     # Refresh shipped instructions while preserving user pause/schedule/model choices.
-                    existing = update_job(existing["id"], {"prompt": prompt, "script": script, "skills": [f"{PLUGIN}:companion"]})
+                    existing = update_job(existing["id"], {"prompt": prompt, "script": script,
+                                                           "skills": [f"{PLUGIN}:companion"], "workdir": None})
                 job = existing
             else:
-                job = create_job(prompt=prompt, script=script, workdir=str(self.store.root), **options)
+                job = create_job(prompt=prompt, script=script, **options)
             record["jobs"][job["id"]] = {"key": key, "owner": owner, "item": item, "marker": marker, "expires": expires}
             if fixed:
                 record["fixed"][key] = job["id"]
@@ -113,6 +114,13 @@ class HermesHost:
             migrate(self.store)
             record = self.manifest()
             self.save_manifest(record)  # identity is durable before any external job creation
+            # Legacy jobs already carry our installation marker; migrate in place, including watches.
+            from cron.jobs import update_job
+            with profile_scope(self.home):
+                for job_id in record["jobs"]:
+                    job = self.owned_job(job_id)
+                    if job and job.get("workdir") is not None:
+                        update_job(job_id, {"workdir": None})
             # Only a byte-identical shipped default is migrated; custom preferences survive.
             prefs_path = self.store.path("PROACTIVE_PREFERENCES.md")
             template = (self.root / "templates/PROACTIVE_PREFERENCES.md").read_text(encoding="utf-8")
@@ -238,8 +246,8 @@ class HermesHost:
         marker = owned.get("marker", "")
         with profile_scope(self.home):
             job = get_job(job_id)
-        if (not marker.startswith("[hermes-muse:" + manifest["installation_id"] + ":") or not job
-                or marker not in job.get("prompt", "") or job.get("workdir") != str(self.store.root)):
+        if (marker != f"[hermes-muse:{manifest['installation_id']}:{owned.get('key')}]" or not job
+                or marker not in job.get("prompt", "")):
             return None
         return job
 
@@ -263,7 +271,9 @@ class HermesHost:
                     row = self.store.read("notification", record["item"], {})
                     if row.get("final_result"):
                         continue
-                if self.owned_job(job_id):
+                job = self.owned_job(job_id)
+                # Hermes refuses pause_job on a finished one-shot; nothing is left to pause.
+                if job and job.get("state") not in {"completed", "error"}:
                     pause_job(job_id, reason="Hermes Muse: owning goal closed")
 
     def stop_watch(self, job_id):

@@ -1,3 +1,11 @@
+# 0.3.2 — Cron no longer depends on a workdir (2026-10-20)
+
+- Muse Cron jobs no longer set `workdir`. A host path there made every terminal command fail (`cd: No such file or directory`, exit 126) when the profile's terminal backend is Docker or another remote/container backend.
+- Job ownership is the installation-scoped prompt marker recorded in `muse/install.json`; the workdir comparison is gone (host, installation prepare/disable/remove).
+- Upgrade: on load, owned 0.3.1 jobs (fixed jobs and watches) have their workdir cleared in place. No new jobs, and schedules, delivery routes, pauses, models and one-shot watches are preserved; repeated loads are idempotent.
+- Closing a goal no longer fails when one of its watches is a finished one-shot (`pause_owner` skips completed/error jobs).
+- Working lessons: without a workdir Hermes no longer injects `muse/AGENTS.md` into Cron prompts, so the Skill tells each Muse Cron run to read `content_read(kind=working_lessons)` first.
+
 # 0.3.1 — delivery gate, watch floor, read-only Dashboard, page redesign (2026-10-17)
 
 - Dashboard/Desktop page: theme-variable styling, shared components, tabs with counts, clickable Feed rows, safe Markdown detail pages with a separate source list, grouped Ideas with an explanatory empty state, and open-first Goals with a folded closed section.

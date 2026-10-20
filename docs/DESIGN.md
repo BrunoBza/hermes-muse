@@ -1,4 +1,4 @@
-# Hermes Muse design — 0.3.1
+# Hermes Muse design — 0.3.2
 
 Status: implementation contract. This independent plugin assembles a long-term assistant using Hermes tools, memory, skills, cron and conversations. It does not modify Hermes core or require a particular model, memory provider, note app or messaging platform. All features are installed together in the active profile.
 
@@ -10,7 +10,7 @@ Coverage percentages discussed during planning were estimates, not release quali
 
 ## Installation and ownership
 
-Entry: `hermes plugins install xiaohei-info/hermes-muse --enable`. The first actual plugin load performs locked, idempotent initialization. No model/network call occurs during registration. It creates missing templates without overwriting user documents, registers one Skill (`hermes-muse:companion`), one bounded system prompt section, a small state tool and hooks; creates six native Cron jobs; records their actual IDs and owned files in `muse/install.json`. A running Hermes scheduler is required for background execution. Repeated load/upgrade preserves edits and paused jobs, and never duplicates jobs. Interrupted initialization is reconciled by a plugin marker plus exact workdir/skill ownership, not job name alone.
+Entry: `hermes plugins install xiaohei-info/hermes-muse --enable`. The first actual plugin load performs locked, idempotent initialization. No model/network call occurs during registration. It creates missing templates without overwriting user documents, registers one Skill (`hermes-muse:companion`), one bounded system prompt section, a small state tool and hooks; creates six native Cron jobs; records their actual IDs and owned files in `muse/install.json`. A running Hermes scheduler is required for background execution. Repeated load/upgrade preserves edits and paused jobs, and never duplicates jobs. Interrupted initialization is reconciled by the per-installation prompt marker (`[hermes-muse:<installation_id>:<key>]`) recorded in `muse/install.json`, not job name alone. Cron jobs set no `workdir`, so Docker/remote terminal backends never `cd` into a host path; 0.3.2 clears the workdir of 0.3.1 jobs in place on load.
 
 Native uninstall: `hermes plugins remove hermes-muse`. Hermes has no guaranteed uninstall callback for deleting cron jobs. README instructs the user to ask their remaining Hermes assistant to pause/remove only job IDs in `muse/install.json`, inspect in-flight work and remove owned launchers. User data is retained. Every launcher checks that the plugin is still installed and enabled, and exits silently otherwise. Reload/unload only stops in-process timers, never erases user data or cancels persistent jobs merely because a process exits.
 
@@ -34,7 +34,7 @@ Paths below are relative to the active `HERMES_HOME`; resolve per call or explic
 
 The existing Skill connects conversational intent, memory upkeep, goal research and patrol delivery. Concrete user plans can become goals without a formal creation command; wishes remain expiring interests. Within existing scope, prepare useful results before offering help. Prefer one strong ordinary proactive item, assess changed understanding rather than publication timestamps, avoid silence-driven status chasing, and preserve specific promised schedules and feedback distinctions. This is prompt-level behavior, not a new permission or scheduler.
 
-Nightly review may maintain a small Working lessons section in the companion workspace AGENTS.md when verified reusable experience exists. It preserves user-written conventions and ownership rules, does not copy personal facts or task logs, and leaves the file unchanged when nothing new was learned. Existing workspaces gain that section through the procedure, not an installer overwrite.
+Nightly review may maintain a small Working lessons section in the companion workspace AGENTS.md when verified reusable experience exists. It preserves user-written conventions and ownership rules, does not copy personal facts or task logs, and leaves the file unchanged when nothing new was learned. Existing workspaces gain that section through the procedure, not an installer overwrite. Cron has no workdir, so AGENTS.md is not auto-injected; the Skill tells each Muse Cron run to read it with `content_read(kind=working_lessons)`.
 
 ## Execution graph
 
@@ -209,7 +209,7 @@ The 40-action interface is [INTERFACE.md](INTERFACE.md). Shared `views.py` reads
 
 Audit indexes identify current batch/slot/expected/returned refs and missing evidence; source text is historical. Allocation/review/continuous-prefix counts differ. Completion rechecks missing native evidence. Watch runs use real native execution bindings and review the owning goal, stop condition and source checks without advancing fixed-job signal cursors.
 
-Explicit installation_prepare validates a current original-session whole-message imperative naming Muse and matching disable/remove; quoted, instructional, negated, conditional, deferred or unrelated requests fail closed. It also validates exact installation/marker/workdir ownership, records original pause state and per-job progress, and returns requires_host_action. Native disable/remove remains a separate host action. Unload only closes instance resources; reenable preserves pauses. All six fixed schedules/IDs and 30-day calendar/source coverage are retained.
+Explicit installation_prepare validates a current original-session whole-message imperative naming Muse and matching disable/remove; quoted, instructional, negated, conditional, deferred or unrelated requests fail closed. It also validates exact installation/marker ownership, records original pause state and per-job progress, and returns requires_host_action. Native disable/remove remains a separate host action. Unload only closes instance resources; reenable preserves pauses. All six fixed schedules/IDs and 30-day calendar/source coverage are retained.
 
 Host gaps are explicit: pending-write approval completion events, provider durable receipts, correlated process notification merging, automatic cleanup for every direct disable path. Fallbacks never invent hooks, execute extra model rounds, alter native owners or send external messages. No runtime dependency on this development transport.
 

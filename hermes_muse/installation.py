@@ -73,21 +73,14 @@ def prepare_owned(home, store, host, data, *, origin="tool"):
             }
             manifest["preparation"] = pending
             host.save_manifest(manifest)
-        from cron.jobs import get_job, pause_job
+        from cron.jobs import pause_job
 
-        for key, owned in manifest["jobs"].items():
+        for key in manifest["jobs"]:
             entry = pending["jobs"].get(key)
             if entry and entry["state"] in {"paused", "unchanged"}:
                 continue
-            job = get_job(key)
-            if (
-                not job
-                or owned.get("marker") not in job.get("prompt", "")
-                or job.get("workdir") != str(store.root)
-                or not owned.get("marker", "").startswith(
-                    "[hermes-muse:" + manifest["installation_id"] + ":"
-                )
-            ):
+            job = host.owned_job(key)
+            if not job:
                 pending["jobs"][key] = {
                     "state": "unchanged",
                     "reason": "ownership mismatch or absent",

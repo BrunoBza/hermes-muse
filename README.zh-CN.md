@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.1
+# Hermes Muse 0.3.2
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
@@ -182,7 +182,7 @@ $HERMES_HOME/
 
 `memory`、`dreams` 和目标目录借鉴 Muse 的组织方式。`install.json`、`state.db`、Feed 落盘和原生记忆路径是 Hermes 适配。首次加载只补齐缺失的工作区模板；目标、笔记和文章在使用时生成。重载不会重复创建固定任务。
 
-夜间任务还可在 `muse/AGENTS.md` 的 Working lessons 中积累少量已验证的工作方法，合并重复、更新过时条目；用户原有约定保留，个人事实和任务流水分别留在记忆与目标记录中。已有安装按需补充该小节，不覆盖整个文件。
+夜间任务还可在 `muse/AGENTS.md` 的 Working lessons 中积累少量已验证的工作方法，合并重复、更新过时条目；用户原有约定保留，个人事实和任务流水分别留在记忆与目标记录中。已有安装按需补充该小节，不覆盖整个文件。Muse 定时任务不设工作目录（Docker/远端终端后端同样可用），改由 `content_read` 读取该小节。
 
 安装不改写 Hermes 核心、`SOUL.md`、原生 `USER.md`/`MEMORY.md`、用户项目 `AGENTS.md` 或配置中的 `agent.system_prompt`。运行期间，助手通过现有记忆工具保存新事实。
 

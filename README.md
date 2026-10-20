@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.1
+# Hermes Muse 0.3.2
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
@@ -209,7 +209,7 @@ The memory, dreams and goal directories borrow Muse's organization. The ownershi
 
 Self-review reads native tool calls/results and owned Cron execution records, including persisted child sessions. Hourly upkeep checks new operations and unfinished repairs; nightly review carries verified lessons forward. Only checkpoints, session/execution references and findings are saved in the existing state database. The first pass covers the preceding 24 hours; later passes continue from the saved checkpoint. Missing history stays a coverage gap. Fixes use existing authority, and consequential errors need an actual user-facing correction before closure; there is no automatic rollback engine.
 
-Nightly review can also maintain a short Working lessons section in `muse/AGENTS.md`, merging duplicate methods and updating stale ones while preserving user-written conventions. Personal facts and task logs stay in memory and goal records. Existing installations add the section only when useful; the whole file is not replaced.
+Nightly review can also maintain a short Working lessons section in `muse/AGENTS.md`, merging duplicate methods and updating stale ones while preserving user-written conventions. Personal facts and task logs stay in memory and goal records. Existing installations add the section only when useful; the whole file is not replaced. Muse Cron jobs read it through `content_read` (they set no working directory, so they also work with Docker or remote terminal backends).
 
 Installation does not rewrite Hermes core, SOUL, native USER/MEMORY files, user project AGENTS files or the configured `agent.system_prompt` value. During use, the assistant saves new facts through existing memory tools.
 

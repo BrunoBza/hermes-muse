@@ -52,6 +52,7 @@ def main():
                 loaded = manager._plugins.get("hermes-muse")
                 assert loaded and loaded.enabled, repr(loaded)
                 jobs = list_jobs(include_disabled=True)
+                assert all(j.get("workdir") is None for j in jobs), jobs
                 assert len(jobs) == 6, [(j["name"], j["id"]) for j in jobs]
                 for key, schedule in (("weekly-governance-review", "15 21 * * 0"),
                                       ("monthly-system-audit", "40 10 1 * *")):
@@ -59,11 +60,12 @@ def main():
                     assert job["deliver"] == "bot-chat", job
                     assert schedule in str(job["schedule"]), job
                     assert "hermes-muse:companion" in str(job), job
-                    ok, gate = _run_job_script("hermes-muse-" + key + ".py", workdir=str(home / "muse"))
+                    ok, gate = _run_job_script("hermes-muse-" + key + ".py", workdir=get_job(job["id"])["workdir"])
                     assert ok and _parse_wake_gate(gate), (ok, gate)
                 # Empty local state is not evidence that connections or native memory have no changes.
                 for key in ("proactive-watch", "memory-upkeep", "nightly-review", "feed-pulse"):
-                    ok, gate = _run_job_script("hermes-muse-" + key + ".py", workdir=str(home / "muse"))
+                    job = next(j for j in jobs if j["name"] == "muse-" + key)
+                    ok, gate = _run_job_script("hermes-muse-" + key + ".py", workdir=get_job(job["id"])["workdir"])
                     assert ok and _parse_wake_gate(gate), (key, ok, gate)
                 assert not any("skill-audit" in j["name"] for j in jobs)
                 ids = {j["id"] for j in jobs}
@@ -157,7 +159,7 @@ def main():
                 finish_execution(attempt["id"], success=True, delivery_outcome="delivered")
                 runtime.host.reconcile()
                 assert runtime.store.read("notification", notice["id"])["status"] == "sent"
-                ok, gate = _run_job_script("hermes-muse-memory-upkeep.py", workdir=str(home / "muse"))
+                ok, gate = _run_job_script("hermes-muse-memory-upkeep.py", workdir=next(j for j in list_jobs(True) if j["name"] == "muse-memory-upkeep")["workdir"])
                 assert ok and _parse_wake_gate(gate), (ok, gate)
                 assert (home / "SOUL.md").read_text() == "Keep this identity exactly.\n"
                 assert (home / "memories/USER.md").read_text() == "Existing private information.\n"
@@ -255,11 +257,13 @@ def main():
             with profile_scope(home):
                 assert get_plugin_manager().unload("hermes-muse")
                 shutil.rmtree(home / "plugins/hermes-muse")
-                ok, output = _run_job_script("hermes-muse-memory-upkeep.py", workdir=str(home / "muse"))
+                ok, output = _run_job_script("hermes-muse-memory-upkeep.py", workdir=next(j for j in list_jobs(True) if j["name"] == "muse-memory-upkeep")["workdir"])
                 assert ok and not _parse_wake_gate(output), (ok, output)
                 assert (home / "muse/install.json").exists()
                 # Host remove intentionally leaves native tasks for the documented cleanup flow.
                 assert len(list_jobs(include_disabled=True)) == 6
+        from native_cron_ownership import run as cron_ownership_checks
+        cron_ownership_checks(base / "cron-ownership")
         from native_companion_smoke import run as companion_checks
         companion_checks(base / "companion")
         from native_followup_smoke import run as followup_checks
