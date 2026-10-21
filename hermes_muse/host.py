@@ -393,6 +393,18 @@ def enabled(home):
     return PLUGIN in plugins.get("enabled", []) and PLUGIN not in plugins.get("disabled", [])
 
 
+def wake_gate_settings(home):
+    """`plugins.hermes-muse.wake_gate` from the profile config; any problem means the gate is off."""
+    from . import wake_gate
+    try:
+        from hermes_cli.config import load_config
+        with profile_scope(home):
+            cfg = load_config()
+        return wake_gate.settings(cfg.get("plugins", {}).get(PLUGIN, {}).get("wake_gate"))
+    except Exception:
+        return wake_gate.settings(None)
+
+
 def cron_run(home, key):
     if not enabled(home):
         return {"wakeAgent": False, "reason": "plugin absent or disabled"}
@@ -428,5 +440,8 @@ def cron_run(home, key):
             return {"wakeAgent": False}
     # Fixed jobs must inspect live sources/memory before deciding there is no work.
     # Only owned watches retain their explicit lifecycle gate above.
-    return {"wakeAgent": key in JOBS, "job": key, "started_at": stamp(),
-            "instruction": "Call muse_manage context, inspect current sources using this job's Skill, then decide whether there is useful work. No worthwhile notification means [SILENT], not a skipped check."}
+    result = {"wakeAgent": key in JOBS, "job": key, "started_at": stamp(),
+              "instruction": "Call muse_manage context, inspect current sources using this job's Skill, then decide whether there is useful work. No worthwhile notification means [SILENT], not a skipped check."}
+    # Optional and off by default; fails open (see wake_gate.py).
+    from . import wake_gate
+    return wake_gate.apply(store, key, result, wake_gate_settings(home))

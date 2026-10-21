@@ -1,3 +1,11 @@
+# 0.3.4 — optional wake gate for the high-frequency jobs (2026-10-21)
+
+- New, off by default: `plugins.hermes-muse.wake_gate` in the profile `config.yaml`. With `mode: typesafe`, the pre-run script of proactive-watch, memory-upkeep and feed-pulse sends a bounded summary of what the run would review (new user messages, goals, interests, source-check ages) to a TypeSafe System One model and skips the run when the probability that it finds something worthwhile is below `min_probability` (default 0.15). With `mode: off` nothing changes.
+- Safe by construction: the gate only reads (it never advances a cursor or consumes a signal, so a skipped run's signals are seen next time); a missing key, timeout, HTTP/parse error or unreadable state wakes the agent; due goals, live notices, an explicit Feed request and a full message backlog wake it without asking the model; a job is never skipped for longer than `max_skip_minutes` (default 120) because mail and calendars are only visible to the agent.
+- One metadata-only line per decision (job, probability, skipped, reason, milliseconds, never message text) goes to `logs/hermes-muse-wake-gate.jsonl` in the profile.
+- Enabling it sends the summary, including clipped message text unless `include_message_text: false`, to the configured endpoint. See the README.
+- No change to schedules, tools, state schema or the other jobs.
+
 # 0.3.3 — The main conversation delegates multi-step work and stays responsive (2026-10-21)
 
 - Delegation guidance: the main conversation replies first and plans, dispatches, follows up, reviews and reports; it does directly only what one or two steps settle and delegates multi-step, waiting or bulky-output work asynchronously with context and completion criteria. The host chooses the executor. Delegation is not narrated (executor, method, IDs, waiting) unless it matters to the user: a non-default model/effort, a needed action or decision, or a blocker/tradeoff. Prompt text and the companion communication/research references are aligned; no tool, schema or state change.

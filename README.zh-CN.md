@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.3
+# Hermes Muse 0.3.4
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
@@ -142,6 +142,27 @@ Bot Chat 会先说清这是什么事、发生了什么，再说明发现、实�
 任务状态会区分信号处理、操作自查、成果文件和通知输出。`muse_manage context` 或 `status` 的 `task_runs` 可以查看各任务当前进度和上一轮实际完成到了哪里；原生 Cron 的“成功”只表示执行结束，不能替代这些结果。中断、达到调用上限或缺少必需成果时保留部分完成状态，下一轮从已保存的位置接续。
 
 最近一次周／月报告摘要可通过 `muse_manage status` 查询，完整输出保留在原生 Cron 历史中，下一轮可据此检查之前的建议有没有带来改善。
+
+## 可选的唤醒判断（默认关闭）
+
+三个高频任务（proactive-watch、memory-upkeep、feed-pulse）默认每次到点都会唤醒模型。如果多数时候什么都没有，可以先让一个小型是/否模型判断一次。默认关闭，开启前行为完全不变。
+
+```sh
+hermes config set plugins.hermes-muse.wake_gate.mode typesafe   # off | typesafe
+export TYPESAFE_API_KEY=...                                     # 放在 profile 的环境变量里，不要写进 config.yaml
+```
+
+开启后，任务的预检查脚本会把“本轮将要审阅的内容”整理成一份有界摘要，向 [TypeSafe](https://docs.typesafe.ai) System One（`jev-latest`）问一个问题：现在跑一轮，是否可能发现值得处理或告诉用户的事？概率低于 `min_probability` 时这次 Cron 静默结束，不启动 agent。
+
+`plugins.hermes-muse.wake_gate` 下的设置：`mode`（默认 `off`）、`jobs`（默认三个高频任务，其他任务从不接入）、`min_probability`（默认 `0.15`，低于才跳过）、`timeout_seconds`（默认 `3`，超时即唤醒）、`max_skip_minutes`（默认 `120`，连续跳过的上限，`0` 为不限；邮件和日历只有 agent 能看到，所以需要定期醒一次）、`include_message_text`（默认 `true`，设为 `false` 只发送数量和时间）、`model` / `base_url` / `api_key_env`（默认 `jev-latest`、`https://api.typesafe.ai/v1`、`TYPESAFE_API_KEY`）。
+
+- 失败即唤醒：缺 key、超时、HTTP/解析错误、Muse 状态读不到，都和没开一样唤醒 agent。
+- 只读：不推进游标、不消费信号，被跳过的轮次里到达的消息，下一轮仍然是“新消息”。
+- 有些状态本身就需要运行，不经过模型：到期的目标检查/复盘、待发（candidate/pending）通知、明确的 Feed 请求、积压达到一页的消息。
+- 它看不到邮件和日历，只看 Muse 自己的状态，所以才有 `max_skip_minutes`。
+- 每次判断在 profile 的 `logs/hermes-muse-wake-gate.jsonl` 追加一行（任务、概率、是否跳过、原因、耗时，不含消息正文），文件最多约 256 KB。可据此调整 `min_probability`。
+
+**开启后数据会发往外部。** 发送的摘要包含任务名及一句说明、本地时间、距上次运行的分钟数、新消息数量、最新最多 8 条新用户消息（每条截取 240 字符）、最多 8 个活跃目标的标题和下次检查时间；Feed 还有最多 8 个兴趣标题和文章数量，巡检还有被跟踪来源的数量和时间。设置 `include_message_text: false` 可去掉消息、目标和兴趣的文本。关闭时不发送任何内容。TypeSafe 对数据的处理受其条款约束；也可以把 `base_url` 指向自己的兼容端点。
 
 ## 文件
 

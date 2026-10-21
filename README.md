@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.3
+# Hermes Muse 0.3.4
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
@@ -154,7 +154,7 @@ Hermes currently resolves reasoning from a per-job `reasoning_effort`, then the 
 
 Schedules use the current Hermes timezone. Watches with an explicit expiry stop when due. Explicitly requested timed reminders and watches can create additional recorded Cron jobs; six is the permanent job count. A new repeating watch (interval or cron) must be provably at least 30 minutes apart or it is refused; a one-off schedule is exempt, and existing jobs are not rewritten. A patrol delivers approved notices in its own final response, with no extra delivery Cron. Deferred candidates stay for the next patrol. Delivery is checked against that execution’s persistent receipt, independently of later patrols.
 
-All six fixed jobs call the model on schedule to inspect the information relevant to their work. Each patrol discovers available connections and devices and checks mail, calendars, reminders and other sources even without saved goals or interests. Each source reuses a stable record and a tested read recipe. Verified tool aliases reuse the established source record; duplicate observations are archived without advancing its successful checkpoint. Different accounts and collections stay separate. Reducing calls must preserve substantive content, sound judgment, proactive help, relevant context and timely follow-through. A failed read calls for diagnosis and recovery where possible in the same run; consequential gaps in ordinary monitoring can merit a notice even without a saved goal. A missing permission is checked before a protected query, and an unavailable source is never treated as an empty result. Expected and checked resources are recorded separately; a missing calendar, unfinished page or failed read cannot advance the successful checkpoint. Checks consume model calls; tools and subagents can add usage.
+All six fixed jobs call the model on schedule to inspect the information relevant to their work. Each patrol discovers available connections and devices and checks mail, calendars, reminders and other sources even without saved goals or interests. Each source reuses a stable record and a tested read recipe. Verified tool aliases reuse the established source record; duplicate observations are archived without advancing its successful checkpoint. Different accounts and collections stay separate. Reducing calls must preserve substantive content, sound judgment, proactive help, relevant context and timely follow-through. A failed read calls for diagnosis and recovery where possible in the same run; consequential gaps in ordinary monitoring can merit a notice even without a saved goal. A missing permission is checked before a protected query, and an unavailable source is never treated as an empty result. Expected and checked resources are recorded separately; a missing calendar, unfinished page or failed read cannot advance the successful checkpoint. Checks consume model calls; tools and subagents can add usage. The optional [wake gate](#optional-wake-gate) can skip runs that have nothing to review.
 
 Before a notice is sent, the assistant reviews the newest native user/assistant conversation text; a newer message requires reading only that new text and a fresh review. A reviewed notice held for an hour by new messages or an active conversation is released to the remaining gates, so a busy conversation delays notices without starving them. Unsent versions of the same issue can be superseded without rewriting delivery history. Named source items retain their literal title, ID and due/timezone. The installation default no longer caps ordinary notices at one per day; quiet hours, deduplication and explicit user limits still apply. Only a byte-identical untouched old preference template is migrated.
 
@@ -169,6 +169,37 @@ Bot Chat explains the subject, what happened, why it matters and what has been c
 Task progress separates signal handling, operation review, artifacts and notification output. `muse_manage context` or `status` exposes `task_runs` with the current attempt and latest ended outcome of each job. Native Cron success means execution ended; it does not prove these stages finished. Interrupted work retains a partial outcome and saved assignments; completed slots are not repeated. Near the host turn limit, upkeep checkpoints and ends normally rather than launching another wave. Independent page receipts survive concurrent readers, repeated completion never moves progress backward, and evidence references remain available for seven days. Successful Skill/tool-discovery reads are excluded from the audit; failures and real changes remain. These records use the existing state database.
 
 The latest review summaries are available through `muse_manage status`; full outputs stay in native Cron history. The next review can use them to check whether earlier suggestions led to useful changes.
+
+## Optional wake gate
+
+The three frequent jobs (proactive-watch, memory-upkeep, feed-pulse) wake the model on every tick by default. If most ticks find nothing, you can let a small yes/no model decide first. This is off by default and changes nothing until you turn it on.
+
+```sh
+hermes config set plugins.hermes-muse.wake_gate.mode typesafe   # off | typesafe
+export TYPESAFE_API_KEY=...                                     # in the profile's environment, not in config.yaml
+```
+
+When on, the job's pre-run script builds a short summary of what the run would review and asks [TypeSafe](https://docs.typesafe.ai) System One (`jev-latest`) one question: is a run now likely to find something worth acting on or telling the user about? If the probability is below `min_probability`, the Cron tick ends silently and the agent is not started.
+
+| Setting under `plugins.hermes-muse.wake_gate` | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `off` | `off` or `typesafe` |
+| `jobs` | all three | subset of `proactive-watch`, `memory-upkeep`, `feed-pulse`; other jobs are never gated |
+| `min_probability` | `0.15` | skip only below this; raise to skip more, lower to wake more |
+| `timeout_seconds` | `3` | the whole request; on expiry the agent is woken |
+| `max_skip_minutes` | `120` | never skip a job longer than this (`0` = no limit); mail and calendars are only visible to the agent, so it must look now and then |
+| `include_message_text` | `true` | `false` sends counts and ages only |
+| `model`, `base_url`, `api_key_env` | `jev-latest`, `https://api.typesafe.ai/v1`, `TYPESAFE_API_KEY` | endpoint and the environment variable holding its key |
+
+Behaviour:
+
+- It fails open. No key, timeout, HTTP or parse error, or unreadable Muse state all wake the agent as if the gate were off.
+- It only reads. It never advances a cursor or consumes a signal, so messages that arrived during a skipped run are still new at the next one.
+- Some state needs a run and never goes to the model: a goal whose check or review is due, a live (candidate/pending) notice, an explicit Feed request, and a backlog as large as one review page.
+- It cannot see your mail or calendars; it sees Muse's own state. That is why `max_skip_minutes` exists. Choose it with how quickly you want new mail noticed in mind.
+- Each decision appends one line to `logs/hermes-muse-wake-gate.jsonl` in the profile (job, probability, skipped, reason, milliseconds; never message text). The file keeps at most about 256 KB. Use it to tune `min_probability`: look for skipped runs that you would have wanted.
+
+**Data leaves your machine when this is on.** The summary sent to the endpoint contains: the job name and a one-line description of it, local time, minutes since the last run, counts of new messages, the newest eight new user messages clipped to 240 characters each, up to eight active goals with titles and time to next check, and for Feed up to eight interest titles and article counts, and for the patrol the number and age of tracked sources. Set `include_message_text: false` to drop message, goal and interest text. Nothing is sent when the gate is off. TypeSafe's handling of the data is governed by their terms; point `base_url` at your own System One-compatible endpoint if you prefer.
 
 ## Files
 

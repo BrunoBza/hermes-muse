@@ -143,6 +143,21 @@ def run(home):
         staged = runtime.handoff(notice["id"])
         assert staged["status"] == "pending" and staged["job_id"] is None
         assert cron_run(home, "proactive-watch")["wakeAgent"]
+        # The wake gate is off by default and, when on, fails open (no API key here).
+        gate_log = home / "logs/hermes-muse-wake-gate.jsonl"
+        assert not gate_log.exists()
+        plain_config = (home / "config.yaml").read_text()
+        (home / "config.yaml").write_text("plugins:\n  enabled: [hermes-muse]\n  hermes-muse:\n    wake_gate:\n"
+                                          "      mode: typesafe\n      api_key_env: MUSE_SMOKE_NO_SUCH_KEY\ntimezone: UTC\n")
+        try:
+            # The fixture holds a pending notice, so the second run is a state-driven wake, not a model call.
+            for expected in ("first_run", "live_notice"):
+                assert cron_run(home, "proactive-watch")["wakeAgent"]
+                assert json.loads(gate_log.read_text().splitlines()[-1])["reason"] == expected, gate_log.read_text()
+            assert enabled(home)
+        finally:
+            (home / "config.yaml").write_text(plain_config)
+            gate_log.unlink()
         execution = create_execution(patrol_id, source="test")
         mark_execution_running(execution["id"])
         task_id = "cron:" + patrol_id + ":" + execution["id"]
