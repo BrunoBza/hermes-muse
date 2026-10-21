@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.4
+# Hermes Muse 0.3.5
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
@@ -195,11 +195,11 @@ Behaviour:
 
 - It fails open. No key, timeout, HTTP or parse error, or unreadable Muse state all wake the agent as if the gate were off.
 - It only reads. It never advances a cursor or consumes a signal, so messages that arrived during a skipped run are still new at the next one.
-- Some state needs a run and never goes to the model: a goal whose check or review is due, a live (candidate/pending) notice, an explicit Feed request, and a backlog as large as one review page.
+- Some state needs a run and never goes to the model: a goal check or review that became due since the job last ran (a goal that has been overdue for days does not count), a live (candidate/pending) notice, an explicit Feed request, and a backlog as large as one review page.
 - It cannot see your mail or calendars; it sees Muse's own state. That is why `max_skip_minutes` exists. Choose it with how quickly you want new mail noticed in mind.
 - Each decision appends one line to `logs/hermes-muse-wake-gate.jsonl` in the profile (job, probability, skipped, reason, milliseconds; never message text). The file keeps at most about 256 KB. Use it to tune `min_probability`: look for skipped runs that you would have wanted.
 
-**Data leaves your machine when this is on.** The summary sent to the endpoint contains: the job name and a one-line description of it, local time, minutes since the last run, counts of new messages, the newest eight new user messages clipped to 240 characters each, up to eight active goals with titles and time to next check, and for Feed up to eight interest titles and article counts, and for the patrol the number and age of tracked sources. Set `include_message_text: false` to drop message, goal and interest text. Nothing is sent when the gate is off. TypeSafe's handling of the data is governed by their terms; point `base_url` at your own System One-compatible endpoint if you prefer.
+**Data leaves your machine when this is on.** The summary sent to the endpoint contains: the job name and a one-line description of it, local time, minutes since the last run, the number of new user messages and the newest eight of them clipped to 240 characters each; for the patrol also the number of active goals and up to eight with a check due in the next two hours (title and minutes); for Feed up to eight interest titles, the number of articles in the last day and the age of the newest. Set `include_message_text: false` to drop message, goal and interest text. Nothing is sent when the gate is off. TypeSafe's handling of the data is governed by their terms; point `base_url` at your own System One-compatible endpoint if you prefer.
 
 ## Files
 

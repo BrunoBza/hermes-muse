@@ -207,13 +207,23 @@ class WakeGateTests(unittest.TestCase):
         self.store.save_goal(goal, "# Reply\n")
         self.assertFalse(self.apply(ask)["wakeAgent"], "a goal that is not due does not force a run")
         self.assertEqual(len(ask.states), 1)
-        self.store.save_goal({**goal, "revision": 2, "next_check_at": self.now - 5}, "# Reply\n",
+        goals = ask.states[0]["active_goals"]
+        self.assertEqual((goals["count"], goals["next_check_within_2h"][0]["minutes_until_check"]), (1, 60))
+        # Overdue since before the last wake: Cron cannot clear it, so it must not wake every tick.
+        self.store.save_goal({**goal, "revision": 2, "next_check_at": self.now - 40 * 60}, "# Reply\n",
+                             expected_hash=self.store.goal("g1", with_fingerprint=True)[2])
+        self.assertFalse(self.apply(ask)["wakeAgent"], "a stale overdue goal does not force a run")
+        self.assertEqual(len(ask.states), 2)
+        self.assertEqual(ask.states[1]["active_goals"]["next_check_within_2h"], [])
+        # Became due after the last wake: look at it once.
+        self.store.save_goal({**goal, "revision": 3, "next_check_at": self.now - 5}, "# Reply\n",
                              expected_hash=self.store.goal("g1", with_fingerprint=True)[2])
         before = len(ask.states)
         self.assertTrue(self.apply(ask)["wakeAgent"])
         self.assertEqual(len(ask.states), before)
         self.assertEqual(self.log()[-1]["reason"], "due_goal")
-        self.store.save_goal({**goal, "revision": 3}, "# Reply\n",
+        self.prime()  # the wake above was logged at the test clock; the next goal state is newer
+        self.store.save_goal({**goal, "revision": 4}, "# Reply\n",
                              expected_hash=self.store.goal("g1", with_fingerprint=True)[2])
         with self.store.transaction() as db:
             self.store.put(db, "notification", "n1", {"id": "n1", "status": "pending", "expires": self.now + 600,
@@ -265,6 +275,24 @@ class WakeGateTests(unittest.TestCase):
         self.apply(ask, cfg=private)
         self.assertNotIn(SECRET, json.dumps(ask.states[0]))
         self.assertEqual(ask.states[0]["new_user_message_count"], 200)
+
+    def test_each_gated_job_has_its_own_question_and_only_the_data_it_needs(self):
+        self.assertEqual(set(wake_gate.QUESTIONS), set(wake_gate.GATED_JOBS))
+        self.assertEqual(set(wake_gate.PURPOSE), set(wake_gate.GATED_JOBS))
+        states = {}
+        for job in wake_gate.GATED_JOBS:
+            self.prime(job)
+            ask = Asker(0.9)
+            self.apply(ask, job)
+            states[job] = ask.states[0]
+            self.assertEqual(states[job]["job"], job)
+            self.assertNotEqual(wake_gate.question(job)["instructions"],
+                                wake_gate.question(next(j for j in wake_gate.GATED_JOBS if j != job))["instructions"])
+        self.assertIn("active_goals", states["proactive-watch"])
+        self.assertIn("feed_articles_last_24h", states["feed-pulse"])
+        for job in ("memory-upkeep", "feed-pulse"):
+            self.assertNotIn("active_goals", states[job])
+        self.assertNotIn("feed_articles_last_24h", states["memory-upkeep"])
 
     def test_background_messages_are_not_user_signals(self):
         self.prime()

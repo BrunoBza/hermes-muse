@@ -36,6 +36,7 @@ LOG_NAME = "hermes-muse-wake-gate.jsonl"
 LOG_MAX_BYTES = 262144
 BACKLOG_WAKE = 25          # as many unprocessed messages as one review batch: always run
 TEXT_CHARS = 240
+SOON = 7200                # "soon" for follow-ups and deadlines: two hours
 LIST_LIMIT = 8
 
 PURPOSE = {
@@ -46,13 +47,33 @@ PURPOSE = {
     "feed-pulse": "A periodic job that writes a short article for the user's quiet reading feed when "
                   "something fits their active interests.",
 }
-CRITERIA = {
-    "true": "Something in the summary suggests a run could produce a worthwhile result: new user "
-            "messages with substance (a request, decision, plan, fact, preference, deadline or "
-            "interest), an upcoming time-sensitive item, or a topic that has not been looked at for a "
-            "long time.",
-    "false": "Nothing new or time-sensitive: no new messages, or only acknowledgements and small talk, "
-             "and nothing coming up soon.",
+# Judged from the summary alone, as a change since the previous run: Muse cannot see mail or calendars,
+# so a standing condition (an old overdue goal, a stale source) must not read as news.
+QUESTIONS = {
+    "proactive-watch": {
+        "instructions": "Would a run of this periodic job (`what_this_job_does`) right now have anything new "
+                        "to act on or to tell the user about, judging only from this summary?",
+        "criteria": {
+            "true": "There is at least one new user message with substance (a request, decision, plan, "
+                    "fact, preference, deadline or interest), or a follow-up or deadline falls due within "
+                    "the next two hours.",
+            "false": "There are no new user messages, or only acknowledgements and small talk, and no "
+                     "follow-up or deadline falls due within the next two hours."}},
+    "memory-upkeep": {
+        "instructions": "Would a run of this periodic job (`what_this_job_does`) right now find anything "
+                        "worth remembering in the new user messages of this summary?",
+        "criteria": {
+            "true": "A new message may hold durable information: a preference, decision, plan, fact about "
+                    "the user or other people, correction, routine, or an interest or goal.",
+            "false": "There are no new messages, or only acknowledgements, one-off commands and small talk."}},
+    "feed-pulse": {
+        "instructions": "Would a run of this periodic job (`what_this_job_does`) right now be likely to "
+                        "write an article worth reading, judging only from this summary?",
+        "criteria": {
+            "true": "The user has recent or active interests, new messages that mention a topic of "
+                    "interest, or the newest article is several hours old.",
+            "false": "An article was written within the last couple of hours and nothing new about the "
+                     "user's interests has appeared since."}},
 }
 
 
@@ -150,18 +171,21 @@ def collect(store, job, now, since):
                  if r.get("expires", 0) > now and r.get("not_before", 0) <= now
                  and r.get("status") in {"active", "candidate", "accepted"}]
     feed = _records(home, "feed")
-    checks = _records(home, "source_check")
     return {"signals": signals, "cursor": cursor, "goals": goals, "notices": notices, "interests": interests,
-            "feed": feed, "source_checks": checks, "since": since,
+            "feed": feed, "since": since,
             "feed_requested": _record(home, "meta", "feed_requested")}
 
 
 def must_run(job, data, now):
-    """Muse's own state already requires a run: due follow-ups, live notices, an explicit Feed request,
-    or a message backlog as large as one review batch. These never go through the model."""
-    active = [g for g in data["goals"] if g.get("status") == "active"]
-    if any(g.get("research_review_at", now + 1) <= now or g.get("next_check_at", now + 1) <= now for g in active):
-        return "due_goal"
+    """Muse's own state already requires a run: a follow-up or review that became due since the last
+    wake, live notices, an explicit Feed request, or a message backlog as large as one review batch.
+    These never go through the model. A goal that has been overdue for days is not a reason: Cron
+    cannot clear it, so it would wake every tick."""
+    since = data["since"]
+    for goal in data["goals"]:
+        if goal.get("status") == "active" and any(
+                since < goal.get(field, 0) <= now for field in ("next_check_at", "research_review_at")):
+            return "due_goal"
     if data["notices"]:
         return "live_notice"
     if job == "feed-pulse" and (data["feed_requested"] or 0) > data["cursor"]:
@@ -193,19 +217,14 @@ def digest(job, data, now, local_time, include_text=True):
         "new_user_message_count": len(new),
         "newest_new_user_messages": [_message(s, now, include_text) for s in new[-LIST_LIMIT:]],
     }
-    active = sorted((g for g in data["goals"] if g.get("status") == "active"),
-                    key=lambda g: g.get("next_check_at", 0))
-    state["active_goals"] = {"count": len(active), "soonest": [
-        {"title": str(g.get("title", ""))[:120] if include_text else None,
-         "next_check_in_minutes": max(0, round((g.get("next_check_at", now) - now) / 60)),
-         "deadline_in_hours": None if not g.get("deadline") else round((g["deadline"] - now) / 3600)}
-        for g in active[:LIST_LIMIT]]}
     if job == "proactive-watch":
-        ages = [_minutes(now, c["last_success"]) for c in data["source_checks"] if c.get("last_success")]
-        state["tracked_sources"] = {
-            "count": len(data["source_checks"]),
-            "minutes_since_oldest_successful_check": max(ages) if ages else None,
-            "partial_or_failed": sum(c.get("status") != "checked" for c in data["source_checks"])}
+        active = [g for g in data["goals"] if g.get("status") == "active"]
+        soon = sorted((g for g in active if 0 < g.get("next_check_at", 0) - now <= SOON),
+                      key=lambda g: g["next_check_at"])
+        state["active_goals"] = {"count": len(active), "next_check_within_2h": [
+            {"title": str(g.get("title", ""))[:120] if include_text else None,
+             "minutes_until_check": round((g["next_check_at"] - now) / 60)} for g in soon[:LIST_LIMIT]],
+            "deadlines_within_2h": sum(0 < (g.get("deadline") or 0) - now <= SOON for g in active)}
     if job == "feed-pulse":
         recent = [f for f in data["feed"] if f.get("created", 0) > now - 86400]
         state["active_interests"] = {"count": len(data["interests"]), "titles": [
@@ -216,11 +235,8 @@ def digest(job, data, now, local_time, include_text=True):
     return state
 
 
-def question():
-    return {"type": "noul", "criteria": CRITERIA, "instructions": (
-        "The state summarises what a periodic job (`what_this_job_does`) would review right now. Is it "
-        "likely that running the job now finds something worth acting on or telling the user about? "
-        "When unsure, answer yes.")}
+def question(job):
+    return {"type": "noul", **QUESTIONS[job]}
 
 
 def ask_systemone(cfg, state, job):
@@ -228,7 +244,7 @@ def ask_systemone(cfg, state, job):
     key = os.environ.get(cfg["api_key_env"], "").strip()
     if not key:
         raise LookupError("api key missing")
-    body = {"model": cfg["model"], "state": state, "questions": {"run": question()}}
+    body = {"model": cfg["model"], "state": state, "questions": {"run": question(job)}}
     request = urllib.request.Request(
         cfg["base_url"].rstrip("/") + "/systemone", data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key,

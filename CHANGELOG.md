@@ -1,7 +1,13 @@
+# 0.3.5 — wake gate: judge change, not standing conditions (2026-10-21)
+
+- Wake gate (introduced in 0.3.4, still off by default): a follow-up or review forces a run only when it became due since the job last woke; a goal that has been overdue for days no longer wakes every tick (Cron cannot clear it, which would have disabled the gate on real profiles).
+- Each job asks its own question and receives only the data it needs: the patrol gets new messages and follow-ups or deadlines due within two hours; memory-upkeep gets new messages; feed-pulse gets new messages, interests and article ages. Stale source checks are no longer part of the summary. In a calibration on synthetic summaries, empty and acknowledgement-only cases scored 0.03-0.11 and substantive ones 0.46-0.97.
+- `min_probability` stays 0.15.
+
 # 0.3.4 — optional wake gate for the high-frequency jobs (2026-10-21)
 
 - New, off by default: `plugins.hermes-muse.wake_gate` in the profile `config.yaml`. With `mode: typesafe`, the pre-run script of proactive-watch, memory-upkeep and feed-pulse sends a bounded summary of what the run would review (new user messages, goals, interests, source-check ages) to a TypeSafe System One model and skips the run when the probability that it finds something worthwhile is below `min_probability` (default 0.15). With `mode: off` nothing changes.
-- Safe by construction: the gate only reads (it never advances a cursor or consumes a signal, so a skipped run's signals are seen next time); a missing key, timeout, HTTP/parse error or unreadable state wakes the agent; due goals, live notices, an explicit Feed request and a full message backlog wake it without asking the model; a job is never skipped for longer than `max_skip_minutes` (default 120) because mail and calendars are only visible to the agent.
+- Safe by construction (0.3.5 corrects the due-goal rule below): the gate only reads (it never advances a cursor or consumes a signal, so a skipped run's signals are seen next time); a missing key, timeout, HTTP/parse error or unreadable state wakes the agent; due goals, live notices, an explicit Feed request and a full message backlog wake it without asking the model; a job is never skipped for longer than `max_skip_minutes` (default 120) because mail and calendars are only visible to the agent.
 - One metadata-only line per decision (job, probability, skipped, reason, milliseconds, never message text) goes to `logs/hermes-muse-wake-gate.jsonl` in the profile.
 - Enabling it sends the summary, including clipped message text unless `include_message_text: false`, to the configured endpoint. See the README.
 - No change to schedules, tools, state schema or the other jobs.
