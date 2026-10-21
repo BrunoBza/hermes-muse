@@ -1,4 +1,4 @@
-# Unreleased
+# 0.3.3 — The main conversation delegates multi-step work and stays responsive (2026-10-21)
 
 - Delegation guidance: the main conversation replies first and plans, dispatches, follows up, reviews and reports; it does directly only what one or two steps settle and delegates multi-step, waiting or bulky-output work asynchronously with context and completion criteria. The host chooses the executor. Delegation is not narrated (executor, method, IDs, waiting) unless it matters to the user: a non-default model/effort, a needed action or decision, or a blocker/tradeoff. Prompt text and the companion communication/research references are aligned; no tool, schema or state change.
 

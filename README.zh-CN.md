@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.2
+# Hermes Muse 0.3.3
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
