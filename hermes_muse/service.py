@@ -13,7 +13,8 @@ from .runs import Runs
 from .store import DAY, GOVERNANCE_JOBS, bounded, digest, epoch, identifier, is_background_message, stamp
 
 DEFAULT_PREFERENCES = {"start_hour": 9, "end_hour": 22, "ordinary_per_day": None,
-                       "time_sensitive_per_day": 3, "blocked_topics": [], "feed_brief": ""}
+                       "time_sensitive_per_day": 3, "blocked_topics": [], "feed_brief": "",
+                       "deliver": None}
 # A reviewed relevant notice held this long by conversation churn/activity is released
 # to the remaining gates (quiet hours, budget, snooze, topic opt-out, dedup).
 HOLD_RELEASE = 3600
@@ -39,6 +40,8 @@ class Companion:
                 raise ValueError(f"Invalid preference: {key}")
         if not isinstance(prefs["blocked_topics"], list) or any(not isinstance(x, str) for x in prefs["blocked_topics"]):
             raise ValueError("blocked_topics must be a list of topic IDs")
+        if prefs["deliver"] is not None and (not isinstance(prefs["deliver"], str) or not prefs["deliver"].strip()):
+            raise ValueError("deliver must be a non-empty string or null")
         return prefs
 
     def preference_update(self, data, *, cron=False):
@@ -58,6 +61,8 @@ class Companion:
                     raise ValueError(f"Invalid preference: {key}")
             if not isinstance(prefs["blocked_topics"], list) or any(not isinstance(x, str) for x in prefs["blocked_topics"]):
                 raise ValueError("blocked_topics must be a list of strings")
+            if prefs["deliver"] is not None and (not isinstance(prefs["deliver"], str) or not prefs["deliver"].strip()):
+                raise ValueError("deliver must be a non-empty string or null")
             if not isinstance(prefs["feed_brief"], str) or len(prefs["feed_brief"]) > 12000:
                 raise ValueError("Feed brief must be text up to 12000 characters")
             path = self.store.path("PROACTIVE_PREFERENCES.md")

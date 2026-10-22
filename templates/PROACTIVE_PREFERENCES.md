@@ -5,7 +5,7 @@ These are assembly defaults, not learned user facts. Change them when the user e
 
 ## Additional explicit preferences
 
-None recorded yet.
+None recorded yet. Optional: `deliver` in the header JSON controls notification destination (`null` auto-resolves to `'all'` if a gateway `/sethome` channel is set, else `'bot-chat'`; or set explicitly e.g. `'all'`, `'bot-chat'`, `'bot-chat,all'`).
 
 ## Coverage scope
 
