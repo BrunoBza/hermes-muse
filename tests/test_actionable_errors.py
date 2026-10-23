@@ -501,3 +501,38 @@ class AllActions(Harness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NightlyIdeasStep(Harness):
+    """Reported 2026-10-23: four nights in a row never reached the Ideas clause buried in the research paragraph."""
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def paragraphs(self):
+        return (self.ROOT / "prompts/nightly-review.md").read_text(encoding="utf-8").split("\n\n")
+
+    def test_ideas_are_their_own_step_between_reflection_and_closing(self):
+        paragraphs = self.paragraphs()
+        step = next(i for i, p in enumerate(paragraphs) if p.startswith("Ideas step"))
+        research = next(i for i, p in enumerate(paragraphs) if p.startswith("Research eligible active goals"))
+        reflection = next(i for i, p in enumerate(paragraphs) if "Write confirmed reflection and alignment before optional follow-up research" in p)
+        closing = next(i for i, p in enumerate(paragraphs) if p.startswith("Complete recoverable work"))
+        self.assertTrue(research < reflection < step < closing)
+        self.assertNotIn("Ideas", paragraphs[research])
+        text = paragraphs[step]
+        for needle in ("never ahead of them", "0-3", "no quota", "title, rationale, sources", "goal_id", "expires", "not authorization"):
+            self.assertIn(needle, text)
+
+    def test_run_complete_summary_records_the_ideas_outcome(self):
+        closing = next(p for p in self.paragraphs() if p.startswith("Complete recoverable work"))
+        self.assertIn("one sentence on Ideas", closing)
+        self.assertIn("why none", closing)
+        self.assertIn("still with the Ideas sentence", closing)
+
+    def test_idea_add_wrong_fields_get_a_one_shot_fix(self):
+        reply = self.failure("idea_add", {"text": "Try X", "kind": "ideas"})
+        self.assertEqual(reply["fields"], ["data.kind", "data.text"])
+        self.assertIn("data.title", reply["hint"])
+        self.assertIn("data.rationale", reply["hint"])
+        self.assertIn("takes no kind", reply["hint"])
+        self.assertEqual(reply["example"]["data"]["title"], "<short headline>")
+        self.assertIn("rename it to data.rationale", self.failure("idea_add", {"title": "t", "reason": "r"})["hint"])

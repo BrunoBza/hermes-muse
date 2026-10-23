@@ -1,3 +1,12 @@
+# 0.3.9 — nightly review has a real Ideas step (2026-10-23)
+
+Cause: Ideas were one clause at the end of the long goal-research paragraph of the nightly prompt, after many required steps. Four consecutive nights ended without any Ideas judgment or trace, so it was not "considered and declined" but never reached.
+
+- `prompts/nightly-review.md`: Ideas are now their own short step after goal research, closure checks and the reflection/alignment rule, before the closing paragraph. Scope is limited to active goals and interests, recent Feed and recently verified user signals; 0-3 Ideas, no quota, duplicates skipped via `context(section=idea)`, fields `title`, `rationale`, `sources?`, `goal_id?`, `expires?` (plus `request_id` and `expected_revision`), and an Idea is never execution authority. The step is explicitly after reflection and alignment, so those still come first.
+- The nightly `run_complete` summary must contain one sentence on Ideas: how many were proposed, or why none. This does not force a number; it makes a night without Ideas traceable.
+- `idea_add` errors: `text`/`content`/`description` point to `title` + `rationale`, `reason`/`why` to `rationale`, `source` to `sources`, `kind`/`type` say the action takes no kind (and that reading uses `kind="idea"`, singular). The error carries a full `idea_add` example.
+- Docs: companion `goals.md`, DESIGN. Other steps and their order are unchanged.
+
 # 0.3.8 — a proactive-watch round's source_checks write right the first time (2026-10-23)
 
 Cause: the 13:00 patrol sent six source_checks in one parallel batch; each tripped on a different avoidable mistake, and the tool-loop guard stopped the run after eight failures.
