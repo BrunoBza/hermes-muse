@@ -1,4 +1,4 @@
-# Unreleased — actionable argument errors
+# 0.3.6 — actionable argument errors (2026-10-23)
 
 - Every `muse_manage` argument failure now names the action and field path (`data.query_window`), the expected type/format/values, what was received (type and clipped value) and the exact repair; common ones add `field`, `expected`, `received`, `hint` and a minimal `example`. All missing required fields and all unsupported fields are reported at once. Misplaced fields get their destination (`account`/`connection`/`resource` into `data.source`, `task` on `delegate` into `goal`/`tasks`, `revision` into `expected_revision`); other unsupported fields list the allowed ones.
 - `source_check`: a text `query_window` (or any `query_window` on a non-calendar source) says to delete it and put the time range in `scope`; calendar sources are told to pass the `calendar_window` object unchanged. Calendar `window`/`sources` are checked with indexed paths (`data.sources[0].inventory`) and name the keys that differ from the `calendar_window` result.
