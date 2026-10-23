@@ -74,11 +74,18 @@ def validate_window(value, path="data.window", action="calendar_view"):
         expected = window(observed.astimezone(zone), value["mode"])
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise fail(action, path, "cannot be read: " + explain_part(exc), expected="the unchanged object returned by calendar_window", fix=fix)
-    if value != expected:
-        changed = sorted(k for k in set(value) | set(expected) if value.get(k, NOTHING) != expected.get(k, NOTHING))
+    # timezone_note is prose for the reader; models retype it, so only the machine fields must match.
+    changed = sorted(k for k in set(value) | set(expected) if k != "timezone_note" and value.get(k, NOTHING) != expected.get(k, NOTHING))
+    if changed:
         raise fail(action, path, "differs from the calendar_window result in: " + ", ".join(changed[:8]),
                    expected="the unchanged object returned by calendar_window (never edit, reformat or recompute its fields)", got=value, fix=fix)
     return instant(value["start"]).astimezone(UTC), instant(value["end"]).astimezone(UTC), zone
+
+
+def canonical_window(value):
+    """The calendar_window result a validated query_window stands for (restores the descriptive timezone_note)."""
+    zone = resolve_zone(value)
+    return window(instant(value["observed_at"]).astimezone(zone), value["mode"])
 
 
 def pages(value, observed, label, since):

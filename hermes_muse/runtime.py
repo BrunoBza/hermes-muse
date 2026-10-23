@@ -59,6 +59,9 @@ class Runtime:
         from .responses import ARCHIVE, archive, preflight, invoke_once
         token = ARCHIVE.set(None)
         try:
+            from .contracts import tidy
+            if isinstance(args, dict) and isinstance(args.get("data"), dict):
+                args = {**args, "data": tidy(args.get("action"), args["data"])}
             preflight(args)
             if not private_session(session_info()):
                 from .content_io import DomainError

@@ -230,7 +230,9 @@ def invoke(runtime, args, kwargs, callback):
                 raise DomainError(
                     "revision_conflict",
                     f"{action}: data.expected_revision {data['expected_revision'][:80]!r} is stale; the object changed (current_revision {actual!r}). "
-                    f"Fix: reread it ({reread}), merge your change into the current content, then resend with a NEW data.request_id "
+                    + ("It is shorter or longer than a real revision, so it was truncated or retyped: copy the revision exactly, never shorten it. "
+                       if actual != "absent" and data["expected_revision"] not in {"absent", actual} and len(data["expected_revision"]) != len(actual) else "")
+                    + f"Fix: reread it ({reread}), merge your change into the current content, then resend with a NEW data.request_id "
                     f"(unique to this run: add the current time) and data.expected_revision={actual!r}. Do not reuse the old request_id.",
                     field="data.expected_revision", hint=f"reread, merge, resend with new request_id and expected_revision={actual!r}",
                     current_revision=actual, **identity,
@@ -254,6 +256,12 @@ def invoke(runtime, args, kwargs, callback):
             except DomainError:
                 pass
         raw = runtime._receipt(result, action=action, data=data)
+        if action == "source_check" and result.get("code") == "invalid_argument":
+            # shortcut: only source_check, whose service validates before its single transaction; other actions keep journaling rejections until theirs is proven write-free.
+            # A rejected call changed nothing, so correcting its arguments must be able to reuse the key.
+            with runtime.store.transaction() as db:
+                runtime.store.delete(db, "mutation_request", journal)
+            return raw
         runtime.store.write(
             "mutation_request",
             journal,

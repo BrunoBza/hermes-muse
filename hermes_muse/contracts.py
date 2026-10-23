@@ -128,6 +128,20 @@ def _check_source(action, data):
                    fix="copy data.observed_at from the matching calendar_view coverage[].source_check")
 
 
+def tidy(action, data):
+    """Drop what a source_check repeats redundantly and fill what its calendar window already implies, so only the essential fields must be right."""
+    source = data.get("source") if action == "source_check" and isinstance(data, dict) else None
+    if not isinstance(source, dict):
+        return data
+    out = {k: v for k, v in data.items() if not (k in ("connection", "account", "resource") and v == source.get(k))}
+    window = out.get("query_window")
+    if source.get("resource") in CALENDAR_RESOURCES and isinstance(window, dict) and isinstance(window.get("observed_at"), str):
+        for name in ("started_at", "observed_at"):
+            if out.get(name) is None:
+                out[name] = window["observed_at"]
+    return out
+
+
 def validate(action, data):
     if action not in FIELDS:
         raise unknown_action(action)

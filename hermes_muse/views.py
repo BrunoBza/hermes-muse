@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 import base64
+import difflib
 import json
 import re
 import sqlite3
@@ -233,7 +234,8 @@ class Views:
                 or kind in {"idea", "interest"}
                 and row.get("kind", "interest") != kind
             ):
-                raise DomainError("not_found", "Object unavailable")
+                raise DomainError("not_found", f"content_read: there is no {kind} with id {key!r}. Fix: list {kind} ids first with context(section={kind}) "
+                                  f"or content_read(kind={kind}) without data.id, then read one of the returned ids.", field="data.id")
             metadata = {
                 k: v
                 for k, v in row.items()
@@ -363,10 +365,13 @@ class Views:
             )
         scope = self.scope()
         kind, key = data.get("kind"), data.get("id")
-        if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}:
+        valid = sorted(COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"})
+        if kind not in valid:
             raise DomainError("invalid_argument", "content_read: data.kind " + repr(kind) + " is not supported. Valid kinds: "
-                              + ", ".join(sorted(COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}))
-                              + ". Notifications are kind=notice. Fix: set data.kind to one of the valid kinds.", field="data.kind")
+                              + ", ".join(valid)
+                              + ". Notifications are kind=notice."
+                              + (f" Did you mean {near[0]!r}?" if (near := difflib.get_close_matches(str(kind), valid, n=1, cutoff=0.75)) else "")
+                              + " Fix: set data.kind to one of the valid kinds.", field="data.kind")
         base = {"kind": kind, "observed_at": time.time()}
         if key is None or kind == "goal_file" and not data.get("resource"):
             limit = data.get("limit", 25)

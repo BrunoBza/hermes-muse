@@ -1,3 +1,14 @@
+# 0.3.8 — a proactive-watch round's source_checks write right the first time (2026-10-23)
+
+Cause: the 13:00 patrol sent six source_checks in one parallel batch; each tripped on a different avoidable mistake, and the tool-loop guard stopped the run after eight failures.
+
+- `source_check`: `account`/`connection`/`resource` repeated beside an identical `data.source` are ignored instead of rejected (a differing value is still an error and says to delete the top-level copy because `data.source` already holds it). For a calendar source `started_at` and `observed_at` may be omitted; both are filled from `query_window.observed_at`. A value you send that disagrees is rejected with "delete data.started_at and data.observed_at".
+- `query_window` is compared on its machine fields only; the descriptive `timezone_note` (models retype it) is ignored and the stored window is the canonical one. Any other change is still rejected and named.
+- A `source_check` rejected for invalid arguments no longer uses up its `request_id`: correcting the arguments and resending under the same key works. Replays and different arguments after a successful write still return the same result / `idempotency_conflict`; other actions keep journaling rejections.
+- A stale `expected_revision` that is shorter or longer than a real revision says it was truncated or retyped, next to the existing `current_revision`.
+- `content_read`: `data.kind` typos get a suggestion (`ideas` -> `idea`); an unknown object id says which kind and how to list valid ids instead of "Object unavailable".
+- Considered and not done: a stored coverage handle for `source_check`. The window is derivable from `calendar_window`, so the remaining hand-typed values were prose and timestamps, now optional or ignored; a handle would add a persisted object with its own expiry for no further one-shot gain.
+
 # 0.3.7 — request_id is unique per run (2026-10-23)
 
 - Cause: the `request_id required` error and the docs showed a date-only key (`source_check-20261017-mail-icloud`). A job that runs many times a day copied the pattern, so its second run reused a key with different arguments and failed with `idempotency_conflict` until the tool-loop guard stopped it. Idempotency itself is unchanged.

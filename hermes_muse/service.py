@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import timedelta
 
-from .calendar import assemble, validate_window, window
+from .calendar import assemble, canonical_window, validate_window, window
 from .guidance import NOTHING, fail
 from .handoff import render_result
 from .operations import Operations
@@ -548,8 +548,8 @@ class Companion:
                 if started != epoch(data["query_window"]["observed_at"]) or not started <= observed <= now:
                     raise fail("source_check", "data.started_at / data.observed_at", "do not match the calendar query",
                                expected="started_at equal to query_window.observed_at, and observed_at between it and now", got=data["started_at"],
-                               fix="copy started_at, query_window and observed_at unchanged from the calendar_view coverage[].source_check")
-                observation = {"query_window": data["query_window"], "observed_at": observed}
+                               fix="delete data.started_at and data.observed_at (Muse fills them from query_window), or copy them unchanged from the calendar_view coverage[].source_check")
+                observation = {"query_window": canonical_window(data["query_window"]), "observed_at": observed}
             if binding:
                 alias_key, alias = binding
                 self.store.put(db, "source_alias", alias_key, alias)

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from hermes_muse.calendar import window
 from hermes_muse.content_io import DomainError
 from hermes_muse.contracts import FIELDS, validate
 from hermes_muse.guidance import REQUIRED, field_kind
@@ -242,6 +243,76 @@ class RequestIdPerRun(Harness):
         self.assertEqual(reply["field"], "data.sources[0]")
         self.assertIn("unbalanced brace", reply["error"])
         self.assertIn("make each entry an object", reply["hint"])
+
+
+class ProactiveWatchBatch(Harness):
+    """Reported 2026-10-23 13:00: one parallel batch of source_checks hit five different mistakes and tripped the tool-loop guard."""
+    CALENDAR = {"connection": "calendar-cli", "account": "default", "resource": "calendars:rolling-30d"}
+
+    def fixed_window(self):
+        from datetime import timedelta, timezone
+        return window(datetime(2026, 10, 12, 23, 0, tzinfo=timezone(timedelta(hours=8), "CST")), "rolling")
+
+    def calendar_check(self, **extra):
+        data = self.check_source(source=self.CALENDAR, expected_resources=["cal-1"], checked_resources=["cal-1"], query_window=self.fixed_window(),
+                                 request_id="cal-1305", expected_revision="absent")
+        data.pop("started_at")
+        return {**data, **extra}
+
+    def test_account_and_connection_repeated_beside_an_identical_source_are_ignored(self):
+        data = self.check_source(request_id="dup-1", expected_revision="absent", account=SOURCE["account"], connection=SOURCE["connection"])
+        reply = self.call("source_check", data)
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["result"]["source"], SOURCE)
+
+    def test_conflicting_or_orphaned_top_level_source_fields_say_what_to_delete(self):
+        clash = self.failure("source_check", self.check_source(request_id="dup-2", expected_revision="absent", account="other"))
+        self.assertIn("delete data.account: data.source already holds them", clash["error"])
+        self.assertIn("they differ from data.source for account", clash["error"])
+        orphan = self.failure("source_check", {k: v for k, v in self.check_source(request_id="dup-3", expected_revision="absent", account="x").items() if k != "source"})
+        self.assertIn("data.source", orphan["error"])
+
+    def test_calendar_check_needs_no_timestamps_and_ignores_a_retyped_timezone_note(self):
+        window_ = {**self.fixed_window(), "timezone_note": "DST unavailable"}
+        data = {**self.calendar_check(), "query_window": window_}
+        reply = self.call("source_check", data)
+        self.assertTrue(reply["ok"], reply)
+        saved = reply["result"]
+        self.assertEqual(saved["query_window"], self.fixed_window())
+        self.assertEqual(saved["started_at"], datetime.fromisoformat(window_["observed_at"]).timestamp())
+
+    def test_calendar_check_still_rejects_a_changed_window_and_mismatched_times(self):
+        changed = self.failure("source_check", {**self.calendar_check(), "query_window": {**self.fixed_window(), "end": "2026-12-01T00:00:00+08:00"}})
+        self.assertIn("differs from the calendar_window result in: end", changed["error"])
+        late = self.failure("source_check", self.calendar_check(started_at=self.now.isoformat()))
+        self.assertIn("delete data.started_at and data.observed_at", late["error"])
+
+    def test_a_rejected_source_check_does_not_burn_its_request_id(self):
+        bad = {**self.calendar_check(), "query_window": {**self.fixed_window(), "end": "2026-12-01T00:00:00+08:00"}}
+        self.assertEqual(self.failure("source_check", bad)["code"], "invalid_argument")
+        again = self.call("source_check", self.calendar_check())
+        self.assertTrue(again["ok"], again)
+        replay = self.call("source_check", self.calendar_check())
+        self.assertTrue(replay["ok"], replay)
+        conflict = self.failure("source_check", {**self.calendar_check(), "summary": "different"})
+        self.assertEqual(conflict["code"], "idempotency_conflict")
+
+    def test_truncated_revision_returns_the_current_one(self):
+        self.assertTrue(self.call("source_check", self.check_source(request_id="rev-1", expected_revision="absent"))["ok"])
+        actual = self.failure("source_check", self.check_source(request_id="rev-2", expected_revision="absent"))["current_revision"]
+        broken = self.failure("source_check", self.check_source(request_id="rev-3", expected_revision=actual[:20] + "?"))
+        self.assertEqual(broken["code"], "revision_conflict")
+        self.assertIn("truncated or retyped", broken["error"])
+        self.assertIn(f"data.expected_revision={actual!r}", broken["error"])
+        self.assertEqual(broken["current_revision"], actual)
+
+    def test_plural_content_kind_and_missing_object_are_actionable(self):
+        kind = self.failure("content_read", {"kind": "ideas", "id": "current"})
+        self.assertIn("Did you mean 'idea'?", kind["error"])
+        missing = self.failure("content_read", {"kind": "idea", "id": "current"})
+        self.assertEqual((missing["code"], missing["field"]), ("not_found", "data.id"))
+        self.assertIn("context(section=idea)", missing["error"])
+        self.assertNotIn("Object unavailable", missing["error"])
 
 
 class Boundary(Harness):

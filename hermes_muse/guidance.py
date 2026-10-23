@@ -231,6 +231,11 @@ def unsupported(action, data, allowed):
             moved = [n for n in names if n in home[0]]
             if name == moved[0]:
                 nested = data.get(home[1]) if isinstance(data.get(home[1]), dict) else {}
+                if nested:
+                    differs = [n for n in moved if n in nested and data.get(n) != nested[n]]
+                    fixes.append("delete " + ", ".join("data." + n for n in moved) + f": data.{home[1]} already holds them"
+                                 + (f"; they differ from data.{home[1]} for {', '.join(differs)}, so keep the value that is right inside data.{home[1]}" if differs else ""))
+                    continue
                 shape = {k: (data[k] if isinstance(data.get(k), str) else nested.get(k) or SOURCE[k]) for k in sorted(home[0])}
                 fixes.append("move " + ", ".join("data." + n for n in moved) + f" into data.{home[1]} = " + json.dumps(shape, ensure_ascii=False)[:300]
                              + " (all three keys are required; resource is a stable collection such as \"mail:inbox\")")
