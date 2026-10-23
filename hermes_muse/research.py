@@ -10,7 +10,8 @@ from .store import bounded
 def start(store, ctx, data, *, owned_cron=False, session_id="", turn_id="", tool_call_id=None):
     items = data.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= 24:
-        raise ValueError("Research needs 1–24 independent read-only questions")
+        from .guidance import fail
+        raise fail("research_start", "data.items", "must be an array of 1-24 question strings", got=items, fix='send data.items as e.g. ["question one", "question two"]')
     unique = list(dict.fromkeys(bounded(x, 2000) for x in items))
     from agent.subagent_lifecycle import get_active_subagent_parent
     parent = get_active_subagent_parent()
@@ -63,7 +64,7 @@ def poll(store, ctx, data):
     from agent.subagent_lifecycle import SubagentHandle, SubagentLaunchRequest
     batch = store.read("research", data["id"])
     if not batch:
-        raise ValueError("Unknown research batch")
+        raise ValueError(f"Unknown research batch id {data['id']!r}; use the id returned by research_start")
     if batch.get("mode") == "native":
         from tools.async_delegation import get_durable_delegation
         dispatch = batch["dispatch"]

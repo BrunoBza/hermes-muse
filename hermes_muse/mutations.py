@@ -3,6 +3,7 @@
 import json
 from .request_context import CURRENT_REQUEST
 from .contracts import CAS, CREATES, validate
+from .guidance import SAME_AGAIN
 from .content_io import DomainError, revision, check_cancelled
 from .views import Views, canonical
 from .host import file_lock, profile_scope
@@ -133,7 +134,10 @@ def invoke(runtime, args, kwargs, callback):
         if old:
             if old["signature"] != signature:
                 raise DomainError(
-                    "idempotency_conflict", "request_id arguments changed"
+                    "idempotency_conflict",
+                    f"{action}: data.request_id {data['request_id'][:60]!r} was already used with different arguments. "
+                    "Fix: send changed arguments under a NEW data.request_id; reuse a request_id only to replay the identical call. " + SAME_AGAIN,
+                    field="data.request_id", hint="use a new request_id for changed arguments",
                 )
             if old.get("result") is not None:
                 raw = runtime._receipt(old["result"], action=action, data=data)
@@ -168,7 +172,10 @@ def invoke(runtime, args, kwargs, callback):
                     return raw
             raise DomainError(
                 "outcome_unknown",
-                "Semantic request interrupted; inspect original object/receipt before any retry",
+                f"{action}: the earlier call with this data.request_id was interrupted, so its outcome is unknown. Fix: read the object "
+                f"(content_read kind={kind}) or the original receipt to see whether it was applied; if it was not, resend with a NEW request_id. "
+                "Do not replay this request_id blindly.",
+                field="data.request_id", hint="inspect the original result before any retry",
             )
         if (
             action == "interest_record"
@@ -176,12 +183,18 @@ def invoke(runtime, args, kwargs, callback):
             and "expected_revision" not in data
         ):
             raise DomainError(
-                "revision_required", "Renewing interest requires its current revision"
+                "revision_required",
+                "interest_record: this interest already exists, so renewing it needs data.expected_revision. Fix: content_read(kind=interest, "
+                f"id={key}) for its revision, then resend with data.expected_revision set to it and a new request_id.",
+                field="data.expected_revision", hint="reread the interest and add its revision",
             )
         if action in CAS or action == "interest_record" and "expected_revision" in data:
             if not kind or not key:
                 raise DomainError(
-                    "invalid_argument", "Object identity is required for CAS"
+                    "invalid_argument",
+                    f"{action}: cannot tell which object to change. Expected data.kind/data.id naming an existing object "
+                    f"(got kind={data.get('kind')!r}, id={data.get('id')!r}). Fix: use the kind and id from the context list row. " + SAME_AGAIN,
+                    field="data.kind, data.id", hint="use the kind and id from the context list row",
                 )
             try:
                 actual = object_state(views, kind, key)[2]
@@ -192,25 +205,32 @@ def invoke(runtime, args, kwargs, callback):
             identity = {"source_id": key} if action == "source_check" else {}
             # The exact read for this object (e.g. kind=notice, not notification) and its current revision string.
             identity["read"] = {"action": "content_read", "data": {"kind": kind, "id": key}}
+            reread = ("context(section=source_check) row or " if action == "source_check" else "") + f"content_read(kind={kind}, id={key})"
             if "expected_revision" not in data:
                 raise DomainError(
                     "revision_required",
-                    "expected_revision required: resend this same call with expected_revision set to current_revision "
-                    "(\"absent\" means a new object); the same request_id may be reused because nothing was written.",
+                    f"{action}: data.expected_revision is required for this write. Expected the revision string of the current object (\"absent\" for a new object). "
+                    f"Got nothing; current_revision is {actual!r}. Fix: resend this same call with data.expected_revision={actual!r}; "
+                    "the same request_id may be reused because nothing was written.",
+                    field="data.expected_revision", hint=f"add data.expected_revision={actual!r}", expected="revision string or \"absent\"",
                     current_revision=actual, **identity,
                 )
             if not isinstance(data["expected_revision"], str):
                 raise DomainError(
                     "invalid_argument",
-                    "expected_revision is the revision string from content_read or a context list row, not the integer "
-                    "_revision; resend with expected_revision set to current_revision.",
+                    f"{action}: data.expected_revision must be the revision string from content_read or a context list row, not a number. "
+                    f"Got {data['expected_revision']!r}; current_revision is {actual!r}. Fix: resend with data.expected_revision={actual!r} "
+                    "(a goal's integer revision applies to goal_update only). " + SAME_AGAIN,
+                    field="data.expected_revision", hint=f"use the string {actual!r}", expected="revision string",
                     current_revision=actual, **identity,
                 )
             if data["expected_revision"] != actual:
                 raise DomainError(
                     "revision_conflict",
-                    "Object changed: reread it with the read call, merge, then resend with a new request_id and "
-                    "expected_revision set to the reread revision.",
+                    f"{action}: data.expected_revision {data['expected_revision'][:80]!r} is stale; the object changed (current_revision {actual!r}). "
+                    f"Fix: reread it ({reread}), merge your change into the current content, then resend with a NEW data.request_id "
+                    f"and data.expected_revision={actual!r}. Do not reuse the old request_id.",
+                    field="data.expected_revision", hint=f"reread, merge, resend with new request_id and expected_revision={actual!r}",
                     current_revision=actual, **identity,
                 )
         intent = {

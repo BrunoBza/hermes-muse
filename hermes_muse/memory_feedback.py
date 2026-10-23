@@ -194,9 +194,9 @@ class MemoryFeedback:
             "expected_revision",
             "request_id",
         }:
-            raise DomainError("invalid_argument", "Unknown memory feedback fields")
+            raise DomainError("invalid_argument", "memory_feedback_review: unsupported data fields. Fix: send only receipt_id, decision, reason, expected_revision, request_id.")
         if data.get("decision") not in {"inform", "silent", "defer"}:
-            raise DomainError("invalid_argument", "Invalid feedback decision")
+            raise DomainError("invalid_argument", "memory_feedback_review: data.decision must be one of inform, silent, defer. Fix: set data.decision to exactly one of them.", field="data.decision")
         if (
             not isinstance(data.get("reason"), str)
             or not 1 <= len(data["reason"]) <= 2000

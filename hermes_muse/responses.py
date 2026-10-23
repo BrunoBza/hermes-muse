@@ -4,6 +4,8 @@ import json
 
 from .content_io import DomainError
 
+from .guidance import SAME_AGAIN as SAME_REQUEST
+
 LIMIT = 256 * 1024
 ARCHIVE = ContextVar('muse_response_archive', default=None)
 
@@ -13,23 +15,27 @@ def encode(value):
 
 
 def preflight(args):
+    from .guidance import bad_envelope, fail
     if not isinstance(args, dict) or set(args) - {'action', 'data'}:
-        raise DomainError('invalid_argument', 'Use action and data only')
+        raise bad_envelope(args)
     # Bound both structural work and serialized bytes before any journal/track/bind.
     def walk(value, depth=0):
         if depth > 24:
-            raise DomainError('size_limit', 'Request nesting exceeds 24 levels')
+            raise fail('muse_manage', 'data', 'is nested too deeply', code='size_limit', expected='at most 24 levels', got=f'{depth} levels',
+                       fix='flatten the structure; send IDs/references instead of embedding whole records')
         if isinstance(value, dict):
             for key, child in value.items():
                 if not isinstance(key, str) or len(key) > 128:
-                    raise DomainError('invalid_argument', 'Object field names must be text of at most 128 characters')
+                    raise fail('muse_manage', 'data', 'has an invalid object key', expected='text keys of at most 128 characters', got=key,
+                               fix='use short text field names; never use a long string (such as content) as a key')
                 walk(child, depth+1)
         elif isinstance(value, list):
             for child in value:
                 walk(child, depth+1)
     walk(args)
     if len(encode(args).encode()) > 512 * 1024:
-        raise DomainError('size_limit', 'Request exceeds 512 KiB; split unstarted work')
+        raise fail('muse_manage', 'arguments', 'are too large', code='size_limit', expected='at most 512 KiB when serialized',
+                   fix='split the work into several calls and send references instead of long bodies')
     from .contracts import validate
     validate(args.get('action'), args.get('data', {}))
 
@@ -77,9 +83,13 @@ def invoke_once(runtime, args, kwargs, callback):
         old = store.read('mutation_request', key)
         if old:
             if old['signature'] != signature:
-                raise DomainError('idempotency_conflict', 'request_id arguments or originating session changed')
+                raise DomainError('idempotency_conflict', f"{action}: data.request_id {data['request_id'][:60]!r} was already used with different arguments or from another session. "
+                                  "Fix: send changed arguments under a NEW data.request_id; reuse it only to replay the identical call. " + SAME_REQUEST,
+                                  field='data.request_id', hint='use a new request_id for changed arguments')
             if old.get('result') is None:
-                raise DomainError('outcome_unknown', 'Original call is pending/interrupted. Inspect native evidence; do not redispatch with another key')
+                raise DomainError('outcome_unknown', f"{action}: the original call with this data.request_id is pending or was interrupted, so its outcome is unknown. "
+                                  "Fix: inspect native evidence/the saved result before acting; do not redispatch with another key.",
+                                  field='data.request_id', hint='inspect native evidence; never redispatch with another key')
             return runtime._receipt(old['result'], action=action, data=data)
         intent = {'signature': signature, 'state': 'pending', 'action': action}
         store.write('mutation_request', key, intent)

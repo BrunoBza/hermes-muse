@@ -1,6 +1,11 @@
 """Single-tool field contracts, independent from prompts and UI."""
 
+import re
+
 from .content_io import DomainError
+from .guidance import (EXAMPLES, ENUMS, IDENTIFIER_ACTIONS, KIND_WORDS, NOTHING, REQUIRED, REQUIRED_FIX, SAME_AGAIN, allowed_fields, fail, field_kind,
+                       unknown_action, unsupported)
+from .store import epoch
 
 FIELDS = {
     "context": "section job window cursor limit id offset length revision part",
@@ -71,26 +76,111 @@ REPLAY_ACTIONS = {'delegate', 'research_start', 'research_status', 'watch_stop',
                   'notification_handoff'}
 
 
+CALENDAR_RESOURCES = ("calendars:rolling-30d", "calendars:natural-month")
+IDENTIFIER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}")
+
+
+def _type_error(action, name, kind, value):
+    path = "data." + name
+    expected = KIND_WORDS[kind]
+    fix = {"text": f"pass {path} as plain text", "int": f"pass {path} as a bare number, not text", "bool": f"pass {path} as true or false (no quotes)",
+           "list": f"pass {path} as a JSON array, e.g. [\"a\", \"b\"]", "time": f"pass {path} as epoch seconds or ISO-8601 text with a UTC offset",
+           "object": f"pass {path} as a JSON object, not JSON-encoded text"}[kind]
+    if isinstance(value, str) and kind in {"list", "object"}:
+        fix += "; this value is text, so decode it first and send the structure itself"
+    if kind == "list" and not isinstance(value, (str, dict, type(None))):
+        fix = f"wrap it: {path} = [value]"
+    return fail(action, path, "has the wrong type", expected=expected, got=value, fix=fix)
+
+
+def _query_window_error(action, value, source):
+    resource = source.get("resource") if isinstance(source, dict) else None
+    if resource in CALENDAR_RESOURCES:
+        fix = ("pass the calendar_window result as a JSON object (not JSON text), copying data.query_window and data.observed_at unchanged "
+               "from the matching calendar_view coverage[].source_check")
+        expected = "the unchanged object returned by calendar_window"
+    else:
+        fix = ("this is not a calendar source: delete data.query_window and data.observed_at and write the time range into data.scope "
+               "(text, e.g. \"unread mail from the last 24 hours\"); only calendar_view coverage uses query_window")
+        expected = "no query_window for non-calendar sources (calendar sources: the calendar_window object)"
+    return fail(action, "data.query_window", "is not valid here", expected=expected, got=value, fix=fix)
+
+
+def _check_source(action, data):
+    source = data.get("source")
+    if not isinstance(source, dict):
+        raise _type_error(action, "source", "object", source)
+    missing = [k for k in ("connection", "account", "resource") if k not in source]
+    extra = sorted(set(source) - {"connection", "account", "resource"})
+    if missing or extra:
+        raise fail(action, "data.source", "needs exactly connection, account and resource",
+                   expected="{\"connection\": <tool/CLI integration id>, \"account\": <account or device id, \"default\" if none>, \"resource\": <stable collection such as mail:inbox>}",
+                   got=source, fix=(("add " + ", ".join("data.source." + k for k in missing)) if missing else "") + ("; " if missing and extra else "")
+                   + (("remove " + ", ".join("data.source." + k for k in extra) + " (scan dates and window text go in data.scope)") if extra else ""))
+    for key in ("connection", "account", "resource"):
+        if not isinstance(source[key], str) or not source[key].strip() or len(source[key]) > 500:
+            raise fail(action, "data.source." + key, "must be stable non-empty text of at most 500 characters", got=source[key],
+                       fix=f"set data.source.{key} to the actual tool/account/collection id; never a date, tick id or changing prose")
+    if "query_window" in data and (source["resource"] not in CALENDAR_RESOURCES or not isinstance(data["query_window"], dict)):
+        raise _query_window_error(action, data["query_window"], source)
+    if "query_window" in data and "observed_at" not in data:
+        raise fail(action, "data.observed_at", "is required together with data.query_window", expected=KIND_WORDS["time"],
+                   fix="copy data.observed_at from the matching calendar_view coverage[].source_check")
+
+
 def validate(action, data):
-    if action not in FIELDS or not isinstance(data, dict):
-        raise DomainError("invalid_argument", "Unknown action or invalid data object")
-    allowed = set(FIELDS[action].split())
-    if action in CAS or action in CREATES:
-        allowed |= {"expected_revision", "request_id"}
-    if action in REPLAY_ACTIONS:
-        allowed.add("request_id")
-    unknown = set(data) - allowed
-    if unknown:
-        raise DomainError(
-            "invalid_argument", "Unsupported fields: " + ", ".join(sorted(unknown)[:8]) + (" (and more; all rejected)" if len(unknown) > 8 else "")
-        )
-    if action in {'context', 'status', 'review_complete'} and 'window' in data and not isinstance(data['window'], str):
-        raise DomainError('invalid_argument', 'window must be text')
-    if action in {'context', 'status', 'content_read'} and 'cursor' in data and not isinstance(data['cursor'], str):
-        raise DomainError('invalid_argument', 'cursor must be text')
+    if action not in FIELDS:
+        raise unknown_action(action)
+    if not isinstance(data, dict):
+        raise fail(action, "data", "must be an object", expected="a JSON object holding this action's fields", got=data,
+                   fix=f"send {{\"action\": \"{action}\", \"data\": {{...fields...}}}}; use {{}} when no fields are needed, and never JSON-encode data into text")
+    allowed = allowed_fields(action)
+    if set(data) - allowed:
+        raise unsupported(action, data, allowed)
+    for name, value in data.items():
+        kind = field_kind(action, name)
+        kind = "text" if kind == "str" else kind
+        if name == "query_window":
+            continue  # Its type depends on the source resource; _check_source reports it.
+        if kind == "int" and type(value) is not int or kind == "bool" and type(value) is not bool or \
+                kind == "list" and not isinstance(value, list) or kind == "object" and not isinstance(value, dict) or \
+                kind == "text" and value is not None and not isinstance(value, str):
+            raise _type_error(action, name, kind, value)
+        if kind == "time" and value is not None:
+            try:
+                epoch(value)
+            except (ValueError, OverflowError, OSError, TypeError):
+                raise fail(action, "data." + name, "is not a usable timestamp", expected=KIND_WORDS["time"], got=value,
+                           fix=f"send data.{name} as epoch seconds or ISO-8601 text that includes a UTC offset or Z (a bare date or local time without offset is rejected)")
+        if (action, name) in ENUMS and value not in ENUMS[(action, name)] and not (
+                name == "job" and isinstance(value, str) and value.startswith("watch-")):  # Owned watch Crons check in as watch-<id>.
+            raise fail(action, "data." + name, "is not an accepted value", expected="one of " + ", ".join(ENUMS[(action, name)]), got=value,
+                       fix=f"set data.{name} to exactly one of the listed values (case-sensitive)")
+        if name == "id" and action in IDENTIFIER_ACTIONS and isinstance(value, str) and not IDENTIFIER.fullmatch(value):
+            raise fail(action, "data.id", "is not a valid record id", expected="1-80 letters, digits, hyphens or underscores, starting with a letter or digit",
+                       got=value, fix="use the id exactly as returned by context/content_read (not a title, path or URL)")
+    required = dict(REQUIRED.get(action, {}))
+    if action == "forget" and data.get("kind") != "content":
+        required["signal_id"] = "text"
+    if action == "review_complete" and str(data.get("job", "")).startswith("watch-"):
+        required.pop("up_to")  # A watch checkpoint names its goal/source checks, not a signal cursor.
+    absent = [n for n, k in required.items() if data.get(n) is None or k == "text" and not data[n].strip()]
+    if action == "source_check" and "source" in absent:
+        present = [k for k in ("connection", "account", "resource") if k in data]
+        raise fail(action, "data.source", "is required", expected="an object {connection, account, resource}",
+                   fix="add data.source = {\"connection\": ..., \"account\": ..., \"resource\": ...}" + (" (those keys are only valid inside it)" if present else ""))
+    if absent:
+        raise fail(action, ", ".join("data." + n for n in absent), "is required but missing or empty" if len(absent) == 1 else "are required but missing or empty",
+                   expected="; ".join(f"data.{n}: {KIND_WORDS[required[n]]}" for n in absent),
+                   fix="; ".join(REQUIRED_FIX.get((action, n), f"add data.{n}") for n in absent)
+                   + (" (empty or whitespace-only text counts as missing)" if any(required[n] == "text" for n in absent) else ""),
+                   fields=["data." + n for n in absent])
+    if action == "source_check":
+        _check_source(action, data)
     if action == 'content_write' and isinstance(data.get('body'), str):
         if len(data['body']) > 60000 or len(data['body'].encode()) > 256 * 1024:
-            raise DomainError('size_limit', 'body exceeds 60000 characters/256 KiB')
+            raise fail(action, 'data.body', 'is too large', code='size_limit', expected='at most 60000 characters and 256 KiB',
+                       got=f"{len(data['body'])} characters", fix='split the content into several pages/sections and write each with its own request_id')
     bounds = {'watch_create': {'prompt': 4000, 'stop_condition': 4000},
               'research_start': {'context': 8000}}
     common = {'title': 300, 'description': 8000, 'completion_criteria': 8000,
@@ -107,61 +197,30 @@ def validate(action, data):
         common.update(scope=1000, cursor=4000)
     for name, maximum in {**common, **bounds.get(action, {})}.items():
         if isinstance(data.get(name), str) and len(data[name]) > maximum:
-            raise DomainError('size_limit', name + ' exceeds its action budget')
+            raise fail(action, 'data.' + name, 'is too long', code='size_limit', expected=f'at most {maximum} characters',
+                       got=f"{len(data[name])} characters", fix=f'shorten data.{name} to {maximum} characters or fewer (keep the essential facts; put long material in content/files and reference it)')
     if action == 'research_start' and isinstance(data.get('items'), list):
-        if not 1 <= len(data['items']) <= 24 or any(not isinstance(x, str) or len(x) > 2000 for x in data['items']):
-            raise DomainError('size_limit', 'research items require 1..24 text questions of at most 2000 characters')
+        if not 1 <= len(data['items']) <= 24:
+            raise fail(action, 'data.items', 'has the wrong number of questions', code='size_limit', expected='1..24 text questions',
+                       got=f"{len(data['items'])} items", fix='send 1-24 questions; split the rest into a later research_start')
+        for index, item in enumerate(data['items']):
+            if not isinstance(item, str) or not item.strip() or len(item) > 2000:
+                raise fail(action, f'data.items[{index}]', 'must be one question as text', code='size_limit', expected='non-empty text of at most 2000 characters',
+                           got=item, fix='make every item a single question string (not an object), at most 2000 characters')
     if action == 'review_complete' and 'window' in data and data.get('job') not in {'memory-upkeep', 'nightly-review'}:
-        raise DomainError('invalid_argument', 'window is only valid for memory-upkeep/nightly-review')
+        raise fail(action, 'data.window', 'is only valid for memory-upkeep and nightly-review', got=data['window'],
+                   fix='delete data.window for this job; use it only with the window token returned by context(section=signals, job=...)')
     for name in ('window', 'revision', 'expected_revision', 'snapshot_revision', 'request_id'):
         if isinstance(data.get(name), str) and len(data[name]) > (128 if name == 'request_id' else 1024):
-            raise DomainError('size_limit', name + ' exceeds its token budget')
+            raise fail(action, 'data.' + name, 'is too long', code='size_limit', expected=f"at most {128 if name == 'request_id' else 1024} characters",
+                       got=f"{len(data[name])} characters", fix=f'send data.{name} exactly as issued by the previous result; do not edit or concatenate it')
     if action in {'context', 'status', 'content_read', 'feed_list'} and isinstance(data.get('cursor'), str) and len(data['cursor']) > 2048:
-        raise DomainError('size_limit', 'cursor exceeds its token budget')
+        raise fail(action, 'data.cursor', 'is too long', code='size_limit', expected='at most 2048 characters', got=f"{len(data['cursor'])} characters",
+                   fix='send the next_cursor exactly as returned; do not edit it')
     for name, value in data.items():
         if (name.endswith('_id') or name in {'id', 'kind', 'section', 'job', 'resource'}) and isinstance(value, str) and len(value) > 512:
-            raise DomainError('size_limit', name + ' exceeds its identity budget')
-        if name in {"offset", "length", "limit", "batch"} and type(value) is not int:
-            raise DomainError("invalid_argument", name + " must be an integer")
-        if (
-            name in {"delete", "final_result", "read_only", "descriptor"}
-            and type(value) is not bool
-        ):
-            raise DomainError("invalid_argument", name + " must be boolean")
-        if name in {
-            "sources",
-            "blocked_topics",
-            "items",
-            "reviews",
-            "tasks",
-            "gaps",
-            "source_check_ids",
-        } and not isinstance(value, list):
-            raise DomainError("invalid_argument", name + " must be an array")
-        if (
-            (
-                name.endswith("_id")
-                or name
-                in {
-                    "id",
-                    "kind",
-
-                    "request_id",
-                    "signal_id",
-                    "resource",
-                    "body",
-                    "title",
-                    "description",
-                    "completion_criteria",
-                    "query",
-                    "topic",
-                    "receipt_id", "section", "revision", "snapshot_revision", "part",
-                }
-            )
-            and value is not None
-            and not isinstance(value, str)
-        ):
-            raise DomainError("invalid_argument", name + " must be text")
+            raise fail(action, 'data.' + name, 'is too long', code='size_limit', expected='an identifier of at most 512 characters', got=f"{len(value)} characters",
+                       fix=f'use the short id returned by Muse for data.{name}, not a title, path or body text')
     if action in CAS or action in CREATES or "request_id" in data:
         if (
             not isinstance(data.get("request_id"), str)
@@ -169,13 +228,17 @@ def validate(action, data):
         ):
             raise DomainError(
                 "invalid_argument",
-                f"request_id required for {action}: a new 1..128-character key per logical write "
+                f"{action}: request_id required for {action} (data.request_id): a new 1..128-character key per logical write "
                 f"(e.g. \"{action}-20261017-mail-icloud\"); reuse it only to replay the identical call."
-                + (" This action also needs expected_revision: the revision string from the object's context list row "
-                   "or content_read, or \"absent\" for a new object." if action in CAS else ""),
+                + (" This action also needs data.expected_revision: the revision string from the object's context list row "
+                   "or content_read, or \"absent\" for a new object." if action in CAS else "")
+                + " " + SAME_AGAIN,
+                field="data.request_id", expected="text of 1..128 characters", hint="add a fresh data.request_id", retryable=False,
+                **({"example": EXAMPLES[action]} if action in EXAMPLES else {}),
             )
     # Other CAS actions get revision_required with current_revision from mutations.invoke.
     if action == "forget" and data.get("kind") == "content" and "expected_revision" not in data:
         raise DomainError(
-            "revision_required", "Read the object through content_read before updating"
+            "revision_required", "forget(kind=content): Read the object through content_read first, then resend with data.expected_revision set to its revision "
+            "(plus object_kind, id, signal_id and a new request_id)", field="data.expected_revision", retryable=False
         )

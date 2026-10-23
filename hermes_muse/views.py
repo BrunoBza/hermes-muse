@@ -364,9 +364,9 @@ class Views:
         scope = self.scope()
         kind, key = data.get("kind"), data.get("id")
         if kind not in COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}:
-            raise DomainError("invalid_argument", "Unsupported content kind " + repr(kind) + ". Valid kinds: "
+            raise DomainError("invalid_argument", "content_read: data.kind " + repr(kind) + " is not supported. Valid kinds: "
                               + ", ".join(sorted(COLLECTIONS | set(SINGLETONS) | {"note_index", "tool_result"}))
-                              + ". Notifications are kind=notice.")
+                              + ". Notifications are kind=notice. Fix: set data.kind to one of the valid kinds.", field="data.kind")
         base = {"kind": kind, "observed_at": time.time()}
         if key is None or kind == "goal_file" and not data.get("resource"):
             limit = data.get("limit", 25)
@@ -471,7 +471,9 @@ class Views:
                     offset = cursor["offset"]
                 except Exception as exc:
                     raise DomainError(
-                        "cursor_expired", "List changed; restart from first page"
+                        "cursor_expired", "data.cursor is no longer valid: the list changed or the cursor was edited. Fix: resend without data.cursor to restart "
+                        "from the first page, then pass each next_cursor back exactly as returned.",
+                        field="data.cursor", hint="drop data.cursor and restart", retryable=True
                     ) from exc
             end = min(len(items), offset + limit)
             while end > offset + 1 and len(canonical(items[offset:end])) > 128 * 1024:

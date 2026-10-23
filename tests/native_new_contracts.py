@@ -307,6 +307,12 @@ with tempfile.TemporaryDirectory(prefix="muse-native-contracts-") as directory:
     assert listed["source"] == source_args["source"] and listed["revision"], listed
     unknown = call("context", {"section": "preferences"}, ok=False)
     assert "Valid sections" in unknown["error"] and "content_read" in unknown["error"], unknown
+    # Through the real registry: misplaced/mistyped arguments say where the field belongs and never leak interpreter text.
+    misplaced = call("source_check", {"account": "a", "connection": "c"}, ok=False)
+    assert "move data.account, data.connection into data.source" in misplaced["error"] and misplaced["field"] == "data.account, data.connection", misplaced
+    typed = call("source_check", {**{k: v for k, v in source_args.items() if k != "query_window"}, "query_window": "last 24h"}, ok=False)
+    assert "data.query_window" in typed["error"] and "data.scope" in typed["error"] and typed["retryable"] is False, typed
+    assert "data.window" in call("calendar_view", {}, ok=False)["error"]
     key = rt.host.manifest()["jobs"][watch["id"]]["key"]
     reviewed = call(
         "review_complete",

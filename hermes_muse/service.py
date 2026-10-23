@@ -7,6 +7,7 @@ import uuid
 from datetime import timedelta
 
 from .calendar import assemble, validate_window, window
+from .guidance import NOTHING, fail
 from .handoff import render_result
 from .operations import Operations
 from .runs import Runs
@@ -44,7 +45,8 @@ class Companion:
     def preference_update(self, data, *, cron=False):
         unknown = set(data) - set(DEFAULT_PREFERENCES)
         if unknown:
-            raise ValueError(f"Unknown preference fields: {sorted(unknown)}")
+            raise fail("preferences", ", ".join("data." + k for k in sorted(unknown)), "is not a preference", expected="only " + ", ".join(DEFAULT_PREFERENCES),
+                       fix="delete the unknown fields or correct their names")
         with self.store.transaction() as db:
             prefs = self.preferences()
             changed = any(prefs.get(key) != value for key, value in data.items())
@@ -55,11 +57,13 @@ class Companion:
                 if key.endswith("_per_day") and prefs[key] is None:
                     continue
                 if type(prefs[key]) is not int or not 0 <= prefs[key] <= high:
-                    raise ValueError(f"Invalid preference: {key}")
+                    raise fail("preferences", "data." + key, "is out of range", expected=f"an integer from 0 to {high}" + (" (or null for no limit)" if key.endswith("_per_day") else ""),
+                               got=prefs[key], fix=f"send data.{key} as a whole number within the range")
             if not isinstance(prefs["blocked_topics"], list) or any(not isinstance(x, str) for x in prefs["blocked_topics"]):
-                raise ValueError("blocked_topics must be a list of strings")
+                raise fail("preferences", "data.blocked_topics", "must be an array of topic strings", got=prefs["blocked_topics"],
+                           fix='send data.blocked_topics as e.g. ["sports", "crypto"]')
             if not isinstance(prefs["feed_brief"], str) or len(prefs["feed_brief"]) > 12000:
-                raise ValueError("Feed brief must be text up to 12000 characters")
+                raise fail("preferences", "data.feed_brief", "must be text of at most 12000 characters", got=prefs["feed_brief"], fix="send a shorter plain-text brief")
             path = self.store.path("PROACTIVE_PREFERENCES.md")
             body = path.read_text(encoding="utf-8").partition("\n")[2]
             self.store.write_text("PROACTIVE_PREFERENCES.md", "<!-- hermes-muse " + json.dumps(prefs, ensure_ascii=False) + " -->\n" + body)
@@ -142,9 +146,10 @@ class Companion:
                                   current_revision=record['revision'])
             status = data.get('status', record['status'])
             if status not in {'active', 'done', 'cancelled'}:
-                raise ValueError('Goal status must be active, done or cancelled')
+                raise fail("goal_update", "data.status", "is not an accepted value", expected="one of active, done, cancelled", got=status, fix="use exactly one of the listed values")
             if status == 'done' and record['status'] != 'done' and not data.get('note'):
-                raise ValueError('Tell the user the result, then record a completion note')
+                raise fail("goal_update", "data.note", "is required when status=done", expected="text describing the result you told the user",
+                           fix="tell the user the result first, then resend with data.note (what was delivered) alongside status=done")
             if 'description' in data or 'completion_criteria' in data:
                 before, separator, criteria = body.partition('## Completion criteria\n')
                 if not separator:
@@ -156,7 +161,7 @@ class Companion:
                 record['owner'] = owner(data['owner'])
             if 'waiting_user' in data:
                 if type(data['waiting_user']) is not bool:
-                    raise ValueError('waiting_user must be boolean')
+                    raise fail("goal_update", "data.waiting_user", "must be true or false", got=data['waiting_user'], fix="send a JSON boolean without quotes")
                 record['waiting_user'] = data['waiting_user']
             if 'blocked' in data:
                 record['blocked'] = bounded(data['blocked'], 2000) if data['blocked'] else None
@@ -165,7 +170,8 @@ class Companion:
             if 'research_review_at' in data:
                 review = epoch(data['research_review_at'])
                 if not now < review <= now + 30 * DAY:
-                    raise ValueError('Research review must be within the next 30 days')
+                    raise fail("goal_update", "data.research_review_at", "must be within the next 30 days", got=data['research_review_at'],
+                               fix="choose a time between now and 30 days from now (ISO-8601 with offset)")
                 record['research_review_at'] = review
             for field in ('note', 'progress'):
                 if data.get(field):
@@ -340,7 +346,8 @@ class Companion:
                     **unread}
         verdict = data.get("verdict")
         if verdict not in {"relevant", "resolved", "superseded"}:
-            raise ValueError("verdict must be relevant, resolved or superseded")
+            raise fail("notification_review", "data.verdict", "is not an accepted value", expected="one of relevant, resolved, superseded", got=verdict,
+                       fix="use exactly one of the listed values and add data.reason")
         reason = bounded(data.get("reason"), 2000)
         with self.store.transaction() as db:
             row = self.store.get(db, "notification", key)
@@ -356,7 +363,8 @@ class Companion:
 
     def source_snapshot(self, data, db=None):
         if not isinstance(data, dict) or set(data) - {"item_id", "title", "due", "timezone", "checked_at"}:
-            raise ValueError("source_snapshot needs original upstream item_id, title, checked_at (not a source_check record ID); optional due/timezone")
+            raise fail("notification_add", "data.source_snapshot", "needs the original upstream item_id, title and checked_at (not a source_check record ID); optional due/timezone",
+                       expected="{item_id, title, checked_at, due?, timezone?}", got=data, fix="send exactly those keys; remove any others")
         result = {k: bounded(data.get(k), 2000) for k in ("item_id", "title")}
         collection = self.store.get(db, "source_check", result["item_id"]) if db is not None else self.store.read("source_check", result["item_id"])
         if collection:
@@ -470,7 +478,8 @@ class Companion:
         source = data.get("source")
         fields = {"connection", "account", "resource"}
         if not isinstance(source, dict) or set(source) != fields:
-            raise ValueError("source needs connection, account and resource (stable tool/account/resource IDs, no scan dates)")
+            raise fail("source_check", "data.source", "needs exactly connection, account and resource", expected="stable tool/account/resource IDs, no scan dates",
+                       got=source, fix='send data.source = {"connection": ..., "account": ..., "resource": ...}')
         source = {k: bounded(source[k], 500) for k in sorted(fields)}
         key = "source-" + digest(json.dumps(source, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
         alias = self.store.get(db, "source_alias", key)
@@ -481,15 +490,18 @@ class Companion:
             if not binding:
                 break
             if any(binding.get("source", {}).get(f) != source[f] for f in ("account", "resource")):
-                raise ValueError("Source alias must retain the same account and resource")
+                raise fail("source_check", "data.source_id", "points at a record with a different account/resource", got=target,
+                           fix="data.source_id must name a source_check record for the same account and resource as data.source; delete data.source_id otherwise")
             target = binding["target"]
         else:
-            raise ValueError("Source alias cycle; inspect recorded identities before continuing")
+            raise fail("source_check", "data.source_id", "creates an alias cycle", got=data.get("source_id"),
+                       fix="read context(section=source_check) and point data.source_id at the canonical record of this source, or delete it")
         if target == key:
             return key, source, None
         canonical = self.store.get(db, "source_check", identifier(target))
         if not canonical or any(canonical["source"][f] != source[f] for f in ("account", "resource")):
-            raise ValueError("source_id must identify the same account and resource; never merge different accounts/collections")
+            raise fail("source_check", "data.source_id", "must identify the same account and resource as data.source; never merge different accounts/collections",
+                       got=target, fix="use a source_check record id from context(section=source_check) whose source has this account and resource, or delete data.source_id")
         reason = (alias or {}).get("reason") or bounded(data.get("alias_reason"), 1000)
         return target, canonical["source"], (key, {"target": target, "source": source, "reason": reason})
 
@@ -500,34 +512,43 @@ class Companion:
             started = epoch(data["started_at"])
             now = self.clock()
             if not 0 < started <= now:
-                raise ValueError("Source check start must be a past or current timestamp")
+                raise fail("source_check", "data.started_at", "must be a past or current timestamp", got=data["started_at"],
+                           fix="set data.started_at to when this check began (epoch seconds or ISO-8601 with offset), not a future time")
             status = data["status"]
             if status not in {"checked", "partial", "error", "unavailable"}:
-                raise ValueError("Invalid source check status")
+                raise fail("source_check", "data.status", "is not an accepted value", expected="one of checked, partial, error, unavailable", got=status,
+                           fix="use exactly one of the listed values")
             scope = bounded(data["scope"], 1000)
             summary = bounded(data["summary"], 2000)
             coverage = {}
             for field in ("expected_resources", "checked_resources"):
                 values = data.get(field, [])
                 if not isinstance(values, list) or len(values) > 500:
-                    raise ValueError(field + " must be a list of resource IDs")
+                    raise fail("source_check", "data." + field, "must be an array of at most 500 resource IDs", got=values,
+                               fix=f"send data.{field} as a JSON array of resource id strings, e.g. [\"mail:inbox\"]")
                 coverage[field] = sorted(set(bounded(v, 1000) for v in values))
             expected, checked = coverage["expected_resources"], coverage["checked_resources"]
             if not set(checked).issubset(expected):
-                raise ValueError("checked_resources must belong to expected_resources")
+                raise fail("source_check", "data.checked_resources", "contains IDs that are not in data.expected_resources", got=sorted(set(checked) - set(expected)),
+                           fix="list every checked ID in data.expected_resources too (expected is the full set in scope, checked the subset actually read)")
             if status == "checked" and (not expected or checked != expected):
                 status = "partial"  # A listed calendar is not a queried calendar.
             cursor = data.get("cursor")
             if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 4000):
-                raise ValueError("Source cursor must be text up to 4000 characters")
+                raise fail("source_check", "data.cursor", "must be text of at most 4000 characters", got=cursor,
+                           fix="send the opaque cursor as plain text, or delete data.cursor")
             observation = {}
             if "query_window" in data:
-                validate_window(data["query_window"])
+                validate_window(data["query_window"], "data.query_window", "source_check")
                 if source["resource"] != data["query_window"]["source_resource"]:
-                    raise ValueError("Calendar query_window must match its separate source resource")
+                    raise fail("source_check", "data.source.resource", "must match data.query_window.source_resource (Calendar query_window must match its separate source resource)",
+                               expected=data["query_window"]["source_resource"], got=source["resource"],
+                               fix="use the resource named by the calendar_window result for this window, or drop query_window for a non-calendar source")
                 observed = epoch(data["observed_at"])
                 if started != epoch(data["query_window"]["observed_at"]) or not started <= observed <= now:
-                    raise ValueError("Calendar observation must fall between query start and current time")
+                    raise fail("source_check", "data.started_at / data.observed_at", "do not match the calendar query",
+                               expected="started_at equal to query_window.observed_at, and observed_at between it and now", got=data["started_at"],
+                               fix="copy started_at, query_window and observed_at unchanged from the calendar_view coverage[].source_check")
                 observation = {"query_window": data["query_window"], "observed_at": observed}
             if binding:
                 alias_key, alias = binding
@@ -575,7 +596,8 @@ class Companion:
         event_key = bounded(data.get("event_key"), 500)
         key = digest(event_key)
         if data.get("priority", "ordinary") not in {"ordinary", "time_sensitive", "urgent", "promised"}:
-            raise ValueError("Invalid priority")
+            raise fail("notification_add", "data.priority", "is not an accepted value", expected="one of ordinary, time_sensitive, urgent, promised",
+                       got=data.get("priority"), fix="use exactly one of the listed values or omit it")
         sources = data.get("sources")
         if not isinstance(sources, list) or not sources or any(not isinstance(s, str) or len(s) > 2000 for s in sources):
             raise ValueError("Supply original evidence source references")
@@ -664,7 +686,7 @@ class Companion:
         with self.store.transaction() as db:
             row = self.store.get(db, "notification", key)
             if not row:
-                raise ValueError("Unknown notification")
+                raise ValueError(f"Unknown notification id {key!r}; read context(section=notice) or content_read(kind=notice) for valid ids")
             if row["status"] in {"candidate", "pending"}:
                 row.update(status="pending", job_id=None)
                 self.store.put(db, "notification", key, row)
@@ -844,7 +866,7 @@ class Companion:
             self.require_signal(db, data.get("signal_id"))
             row = self.store.get(db, kind, key)
             if not row:
-                raise ValueError("Unknown feedback item")
+                raise ValueError(f"Unknown {kind} id {key!r}; read context(section={'notice' if kind == 'notification' else kind}) for valid ids")
             if action == "snooze":
                 until = epoch(data["until"])
                 if not self.clock() < until < row["expires"]:
@@ -899,7 +921,7 @@ class Companion:
             signal = self.require_signal(db, data.get("signal_id"))
             row = self.store.get(db, "feed", key)
             if not row:
-                raise ValueError("Unknown Feed article")
+                raise ValueError(f"Unknown Feed article id {key!r}; call feed_list for valid ids")
             if data.get("delete"):
                 self.store.path(row["path"]).unlink(missing_ok=True)
                 self.store.delete(db, "feed", key)

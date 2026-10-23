@@ -29,7 +29,9 @@ def index(items, data, scope):
                 raise ValueError()
             start = token['offset']
         except Exception as exc:
-            raise DomainError('cursor_expired', 'Index changed; restart this section') from exc
+            raise DomainError('cursor_expired', 'data.cursor is no longer valid: the index changed or the cursor was edited. Fix: resend without data.cursor '
+                              '(and without data.window/revision) to restart this section, then pass each next_cursor back exactly as returned.',
+                              field='data.cursor', hint='drop data.cursor and restart', retryable=True) from exc
     end = min(len(items), start + limit(data))
     return {'items': items[start:end], 'total': len(items), 'snapshot_revision': fingerprint,
             'next_cursor': base64.urlsafe_b64encode(canonical({'revision': fingerprint, 'offset': end})).decode() if end < len(items) else None}
@@ -148,9 +150,9 @@ def context(service, data, *, view=None):
         result['items'] = [service.conversation_read({'session_id': s['id'], 'descriptor': True}) for s in result['items']]
         return result
     if section != 'overview':
-        raise DomainError('invalid_argument', f"Unknown section {section!r}. Valid sections: {', '.join((*COLLECTIONS, 'conversations', 'followups', 'signals'))}. "
+        raise DomainError('invalid_argument', f"data.section {section!r} is not a section. Valid sections: {', '.join((*COLLECTIONS, 'conversations', 'followups', 'signals'))}. "
                           "Preferences and installation are not sections: content_read {kind:'preferences'|'installation', id:'current'}. "
-                          "Arguments go inside data, e.g. {action:'context', data:{section:'notice', limit:25}}.")
+                          "Arguments go inside data, e.g. {action:'context', data:{section:'notice', limit:25}}. Fix: set data.section to a valid section.", field='data.section')
     return {'now': service.clock(), 'job': view,
             'read_semantics': 'Bounded index. Collection pages use content_read revisions; signal windows freeze through and record served ranges.',
             'sections': {k: {'action': 'context', 'data': {'section': k, 'limit': 25}} for k in (*COLLECTIONS, 'conversations', 'followups')},

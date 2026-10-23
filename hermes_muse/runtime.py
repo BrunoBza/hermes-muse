@@ -72,14 +72,20 @@ class Runtime:
             raw = invoke_once(self, args, kwargs, lambda: invoke(self, args, kwargs, self._handle))
             return self._receipt(json.loads(raw), action=args['action'], data=args.get('data', {}))
         except Exception as exc:
-            return self._error(exc)
+            return self._error(exc, *self._call_of(args))
         finally:
             ARCHIVE.reset(token)
 
     @staticmethod
-    def _error(exc):
+    def _call_of(args):
+        return (args.get("action"), args.get("data")) if isinstance(args, dict) else (None, None)
+
+    @staticmethod
+    def _error(exc, action=None, data=None):
+        from .guidance import normalize
+        exc = normalize(exc, action, data)
         error = {"ok": False, "error": str(exc), "code": getattr(exc, "code", "invalid_argument"),
-                 "retryable": getattr(exc, "code", "") in {"revision_conflict", "cursor_expired", "source_unavailable"},
+                 "retryable": getattr(exc, "code", "") in {"revision_conflict", "revision_required", "cursor_expired", "source_unavailable"},
                  **getattr(exc, "details", {})}
         if hasattr(exc, "native_result"):
             error['native'] = exc.native_result
@@ -104,23 +110,20 @@ class Runtime:
                 raise ValueError("Personal Muse data is available in private/direct conversations only")
             from .content_io import DomainError
             from .views import Views
-            if not isinstance(args, dict) or set(args) - {"action", "data"}:
-                raise DomainError("invalid_argument", "Use action and data only")
-            if len(json.dumps(args, ensure_ascii=False, allow_nan=False).encode()) > 512 * 1024:
-                raise DomainError("size_limit", "Request exceeds 512 KiB")
-            data = args.get("data", {})
-            if not isinstance(data, dict):
-                raise ValueError("data must be an object")
-            action = args["action"]
             from .contracts import validate
+            from .guidance import bad_envelope
+            if not isinstance(args, dict) or set(args) - {"action", "data"}:
+                raise bad_envelope(args)
+            if len(json.dumps(args, ensure_ascii=False, allow_nan=False).encode()) > 512 * 1024:
+                raise DomainError("size_limit", "Request exceeds 512 KiB; split unstarted work into several calls")
+            data = args.get("data", {})
+            action = args.get("action")
             validate(action, data)
             from .contracts import CAS, CREATES, REPLAY_ACTIONS
             if (action in CAS or action in CREATES) and not (action == "forget" and data.get("kind") == "content"):
                 data = {k:v for k,v in data.items() if k not in {"expected_revision", "request_id"}}
             if action in REPLAY_ACTIONS:
                 data = {k: v for k, v in data.items() if k != "request_id"}
-            if action not in ACTIONS:
-                raise ValueError("Unknown Muse action")
             from agent.delegation_context import is_delegated_child_context
             delegated = is_delegated_child_context()
             goal_write = action in {'goal_create', 'goal_update'} or action == 'forget' and data.get('kind') == 'goal'
@@ -283,7 +286,7 @@ class Runtime:
             return self._response(result, action=action, data=data)
         except Exception as exc:
             log.warning("Hermes Muse action %s failed: %s", args.get("action"), exc)
-            return self._error(exc)
+            return self._error(exc, *self._call_of(args))
 
     @staticmethod
     def _response(result, *, action=None, data=None):

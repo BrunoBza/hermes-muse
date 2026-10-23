@@ -6,7 +6,10 @@ import json
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from .guidance import NOTHING, explain_part, fail
+
 UTC = timezone.utc
+WINDOW_KEYS = ("mode", "timezone", "observed_at", "start", "end", "source_resource")
 
 
 def resolve_zone(value):
@@ -55,22 +58,40 @@ def window(now, mode="rolling"):
     return result
 
 
-def validate_window(value):
-    zone = resolve_zone(value)
-    observed = instant(value["observed_at"])
-    expected = window(observed.astimezone(zone), value["mode"])
+def validate_window(value, path="data.window", action="calendar_view"):
+    """Check a window is exactly what calendar_window returned; every failure names the field and the repair."""
+    fix = "call calendar_window (data.mode rolling or month) and pass its result back as an object, unchanged"
+    if not isinstance(value, dict):
+        raise fail(action, path, "must be the calendar_window result object", expected="the unchanged object returned by calendar_window", got=value,
+                   fix=fix + "; do not JSON-encode it into text or rebuild it by hand")
+    missing = [k for k in WINDOW_KEYS if k not in value]
+    if missing:
+        raise fail(action, path, "is missing keys " + ", ".join(missing), expected="all keys of the calendar_window result: " + ", ".join(WINDOW_KEYS),
+                   got=value, fix=fix + "; do not drop keys")
+    try:
+        zone = resolve_zone(value)
+        observed = instant(value["observed_at"])
+        expected = window(observed.astimezone(zone), value["mode"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise fail(action, path, "cannot be read: " + explain_part(exc), expected="the unchanged object returned by calendar_window", fix=fix)
     if value != expected:
-        raise ValueError("Use the unchanged calendar_window result for all calendar queries")
+        changed = sorted(k for k in set(value) | set(expected) if value.get(k, NOTHING) != expected.get(k, NOTHING))
+        raise fail(action, path, "differs from the calendar_window result in: " + ", ".join(changed[:8]),
+                   expected="the unchanged object returned by calendar_window (never edit, reformat or recompute its fields)", got=value, fix=fix)
     return instant(value["start"]).astimezone(UTC), instant(value["end"]).astimezone(UTC), zone
 
 
 def pages(value, observed, label, since):
     """Validate a full, ordered pagination chain, retaining earlier useful pages."""
     items, gaps, times = [], [], []
+    if not isinstance(value, dict):
+        return items, [label + ": expected an object with `pages`, got " + type(value).__name__], times
     if value.get("status", "checked") != "checked":
         gaps.append(label + ": " + value.get("status", "error") + ": " + str(value.get("error", "read failed")))
     token, seen = None, set()
     entries = value.get("pages", [])
+    if not isinstance(entries, list) or any(not isinstance(page, dict) for page in entries):
+        return items, gaps + [label + ": `pages` must be an array of page objects {status, observed_at, items, request_token?, next_token?}"], times
     if not entries:
         gaps.append(label + ": no page receipt (empty requires a successful empty page)")
     for index, page in enumerate(entries):
@@ -83,8 +104,8 @@ def pages(value, observed, label, since):
                 raise ValueError("Page observation predates query or is in the future")
             if not isinstance(page["items"], list):
                 raise ValueError("Page items must be a list")
-        except (KeyError, TypeError, ValueError) as exc:
-            gaps.append(label + ": " + str(exc))
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            gaps.append(label + ": page " + str(index) + ": " + explain_part(exc) + " (each page needs observed_at as ISO time with offset and items as an array)")
             break
         times.append(at.isoformat())
         if page.get("status") != "checked":
@@ -105,7 +126,7 @@ def pages(value, observed, label, since):
 
 
 def required_text(value, field):
-    result = value[field]
+    result = value.get(field) if isinstance(value, dict) else None
     if not isinstance(result, str) or not result.strip():
         raise ValueError(field + " must be nonempty text")
     return result
@@ -146,24 +167,45 @@ def assemble(data, now):
     begin, end, zone = validate_window(query)
     since = instant(query["observed_at"])
     if since.timestamp() > now.timestamp():
-        raise ValueError("Query snapshot cannot be in the future")
+        raise fail("calendar_view", "data.window.observed_at", "is in the future", got=query["observed_at"],
+                   fix="call calendar_window again and use its fresh result; do not shift observed_at")
     sources = data["sources"]
     if not isinstance(sources, list):
-        raise ValueError("sources must include every discovered authorized calendar connection/account")
+        raise fail("calendar_view", "data.sources", "must be an array with one entry per discovered calendar connection/account", got=sources,
+                   fix="send data.sources = [{source, title, inventory, calendars}, ...] covering every discovered authorized calendar")
     events, coverage, gaps = [], [], []
     identity_rows = {}
     seen_sources = set()
-    for source in sources:
+    for number, source in enumerate(sources):
+        at = f"data.sources[{number}]"
+        if not isinstance(source, dict):
+            raise fail("calendar_view", at, "must be an object", expected="{source:{connection,account,resource}, title, inventory:{pages:[...]}, calendars:[...]}",
+                       got=source, fix="make each entry an object; do not JSON-encode it into text")
         if source.get("receipt_format") == "apple-pim":
             from .apple_calendar import adapt
             source = adapt(source)
+        for key, kind in (("source", dict), ("title", str), ("inventory", dict)):
+            if not isinstance(source.get(key), kind):
+                raise fail("calendar_view", f"{at}.{key}", "is required" if key not in source else "has the wrong type",
+                           expected={"source": "object {connection, account, resource}", "title": "text label for this account",
+                                     "inventory": "object {pages:[{status, observed_at, items:[calendars]}]}"}[key],
+                           got=source.get(key, NOTHING), fix=f"set {at}.{key} as shown in the example")
+        if not isinstance(source.get("calendars", []), list) or any(not isinstance(read, dict) for read in source.get("calendars", [])):
+            raise fail("calendar_view", f"{at}.calendars", "must be an array of per-calendar read objects", expected="[{resource_id, window, pages:[...]}]",
+                       got=source["calendars"], fix="send one read object per listed calendar, each with the same window object as data.window")
         identity = source["source"]
         if set(identity) != {"connection", "account", "resource"}:
-            raise ValueError("source requires stable connection/account/resource identity")
+            raise fail("calendar_view", f"{at}.source", "needs exactly connection, account and resource", expected="stable tool/account/resource identity",
+                       got=identity, fix="use the same {connection, account, resource} object each time; resource must equal data.window.source_resource")
         for field in identity:
-            required_text(identity, field)
+            try:
+                required_text(identity, field)
+            except ValueError:
+                raise fail("calendar_view", f"{at}.source.{field}", "must be non-empty text", got=identity[field],
+                           fix=f"set {at}.source.{field} to the real integration/account/collection id")
         if identity["resource"] != query["source_resource"]:
-            raise ValueError("Calendar windows need separate rolling-30d/natural-month source resources; preserve legacy checkpoints")
+            raise fail("calendar_view", f"{at}.source.resource", "must equal data.window.source_resource (Calendar windows need separate rolling-30d/natural-month source resources; preserve legacy checkpoints)",
+                       expected=query["source_resource"], got=identity["resource"], fix=f"set {at}.source.resource to {query['source_resource']!r}")
         source_key = tuple(identity[field] for field in sorted(identity))
         if source_key in seen_sources:
             raise ValueError("Duplicate source " + json.dumps(identity, ensure_ascii=False) + ": merge every calendar of one "
@@ -185,8 +227,8 @@ def assemble(data, now):
                     raise ValueError("Duplicate calendar inventory ID")
                 expected.append(rid)
                 resource_rows.append(resource)
-            except (KeyError, TypeError, ValueError) as exc:
-                problems.append(title + " inventory: " + str(exc))
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                problems.append(title + " inventory: " + explain_part(exc) + " (each calendar needs id, title and timezone)")
         reads = source.get("calendars", [])
         if any(read.get("resource_id") not in expected for read in reads):
             problems.append(title + ": read of an unlisted resource")
@@ -195,7 +237,7 @@ def assemble(data, now):
             rid = resource["id"]
             matches = [read for read in reads if read.get("resource_id") == rid]
             if len(matches) != 1 or matches[0].get("window") != query:
-                problems.append(title + "/" + rid + ": missing/duplicate read or different query interval")
+                problems.append(title + "/" + rid + ": calendars[] needs exactly one read with resource_id=" + rid + " whose window is identical to data.window (missing, duplicated or different window)")
                 continue
             raw, failures, read_times = pages(matches[0], now, title + "/" + rid, since)
             times.extend(read_times)
@@ -232,8 +274,8 @@ def assemble(data, now):
                     if finish > begin and start < end or event.get("status") == "cancelled":
                         identity_rows[key] = len(events)
                         events.append(row)
-                except (KeyError, TypeError, ValueError) as exc:
-                    failures.append(title + "/" + rid + ": invalid event: " + str(exc))
+                except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                    failures.append(title + "/" + rid + ": invalid event: " + explain_part(exc))
             if not failures:
                 checked.append(rid)
             problems.extend(failures)

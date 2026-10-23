@@ -2,6 +2,8 @@
 import json
 import os
 
+from .guidance import fail
+
 
 def settings():
     try:
@@ -33,16 +35,24 @@ def validate(data, *, owned_cron=False):
     # Do not expose trusted native routing/transport kwargs through the state tool.
     allowed = {"goal", "context", "tasks", "output_schema", "images", "action", "subagent_id", "message"}
     if set(data) - allowed:
-        raise ValueError("Unsupported delegation fields; model routing is selected by the host context")
+        raise fail("delegate", ", ".join("data." + k for k in sorted(set(data) - allowed)), "is not accepted",
+                   expected="only " + ", ".join(sorted(allowed)) + " (model, route and credentials come from the host)",
+                   fix="delete the unsupported fields; put instructions in data.goal or data.tasks")
     request = dict(data)
     if "tasks" in request:
         tasks = request["tasks"]
         if not isinstance(tasks, list) or any(not isinstance(task, dict) for task in tasks):
-            raise ValueError("tasks must be a list of task objects")
-        if any(set(task) - {"goal", "context", "output_schema", "images", "role"} for task in tasks):
-            raise ValueError("Unsupported task fields; transport settings cannot be supplied by the model")
+            raise fail("delegate", "data.tasks", "must be an array of task objects", expected='[{"goal": ..., "context": ...}]', got=tasks,
+                       fix='send data.tasks as an array of objects, each with at least a text `goal`')
+        for index, task in enumerate(tasks):
+            if set(task) - {"goal", "context", "output_schema", "images", "role"}:
+                raise fail("delegate", f"data.tasks[{index}]", "has unsupported fields: " + ", ".join(sorted(set(task) - {"goal", "context", "output_schema", "images", "role"})),
+                           expected="only goal, context, output_schema, images, role (transport settings cannot be supplied by the model)", got=task,
+                           fix="delete the unsupported keys; put instructions in goal")
         if len(tasks) > concurrency_limit():
-            raise ValueError("Batch exceeds effective Muse/user concurrency limit; split unstarted tasks before dispatch")
+            raise fail("delegate", "data.tasks", "has too many tasks for the effective concurrency limit", code="invalid_argument",
+                       expected=f"at most {concurrency_limit()} tasks per call", got=f"{len(tasks)} tasks",
+                       fix=f"send the first {concurrency_limit()} tasks now and the rest in a later call after they finish")
     return parent, request
 
 

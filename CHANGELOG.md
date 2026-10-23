@@ -1,3 +1,10 @@
+# Unreleased — actionable argument errors
+
+- Every `muse_manage` argument failure now names the action and field path (`data.query_window`), the expected type/format/values, what was received (type and clipped value) and the exact repair; common ones add `field`, `expected`, `received`, `hint` and a minimal `example`. All missing required fields and all unsupported fields are reported at once. Misplaced fields get their destination (`account`/`connection`/`resource` into `data.source`, `task` on `delegate` into `goal`/`tasks`, `revision` into `expected_revision`); other unsupported fields list the allowed ones.
+- `source_check`: a text `query_window` (or any `query_window` on a non-calendar source) says to delete it and put the time range in `scope`; calendar sources are told to pass the `calendar_window` object unchanged. Calendar `window`/`sources` are checked with indexed paths (`data.sources[0].inventory`) and name the keys that differ from the `calendar_window` result.
+- The tool entry point converts `KeyError`/`TypeError`/`AttributeError` into `invalid_argument` with the action, field and schema hint; interpreter text such as `'str' object has no attribute 'get'` or a bare `'window'` is no longer returned. Revision, request_id and cursor errors say how to recover (new `request_id` plus the current `expected_revision`, or drop the cursor).
+- `retryable` is accurate: true for `revision_conflict`, `revision_required`, `cursor_expired`, `source_unavailable`; other validation errors say an unchanged resend fails again. Error codes and successful results are unchanged.
+
 # 0.3.5 — wake gate: judge change, not standing conditions (2026-10-21)
 
 - Wake gate (introduced in 0.3.4, still off by default): a follow-up or review forces a run only when it became due since the job last woke; a goal that has been overdue for days no longer wakes every tick (Cron cannot clear it, which would have disabled the gate on real profiles).

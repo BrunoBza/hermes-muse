@@ -175,7 +175,7 @@ class Store:
     def goal(self, key, *, with_fingerprint=False):
         path = self.path(f"workspace/goals/{identifier(key)}/GOAL.md")
         if not path.exists():
-            raise ValueError(f"Unknown goal: {key}")
+            raise ValueError(f"Unknown goal id {key!r}; read context(section=goal) for valid goal ids")
         from .content_io import Files
         raw = Files(self.home).read(f"workspace/goals/{identifier(key)}/GOAL.md")
         text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")

@@ -1,0 +1,373 @@
+"""Every argument failure names the field, expected shape, received value and the repair; no interpreter text leaks."""
+import contextlib
+import json
+import re
+import sys
+import tempfile
+import types
+import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from hermes_muse.content_io import DomainError
+from hermes_muse.contracts import FIELDS, validate
+from hermes_muse.guidance import REQUIRED, field_kind
+from hermes_muse.runtime import Runtime
+from hermes_muse.service import Companion
+from test_companion import Host, prepare
+
+LEAK = re.compile(r"has no attribute|object is not|NoneType|not subscriptable|unhashable|positional argument|KeyError|TypeError|AttributeError"
+                  r"|Traceback|invalid literal|string indices|must be str, not|argument of type|No module named|cannot import|object has no")
+WRONG = {"str": 5, "int": "x", "bool": "x", "list": "x", "object": "x", "text": 5, "time": "not-a-time"}
+SOURCE = {"connection": "mail-cli", "account": "default", "resource": "mail:inbox"}
+
+
+class RuntimeHost(Host):
+    """Native Cron/profile surfaces are absent in the stdlib-only unit job."""
+    def reconcile(self):
+        pass
+
+    def manifest(self):
+        return {"jobs": {}}
+
+    def current_delivery(self, task_id):
+        return None
+
+    def is_active_watch(self, *args):
+        return False
+
+    def watch(self, data):
+        raise ValueError("Native Cron is not available in this test")
+
+    stop_watch = watch
+
+
+class Harness(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.now = datetime(2026, 10, 12, 12, tzinfo=ZoneInfo("America/New_York"))
+        store = prepare(temp.name)
+        host = Host()
+        host.local_now = lambda timestamp: datetime.fromtimestamp(timestamp, self.now.tzinfo)
+        self.service = Companion(store, host, lambda: self.now.timestamp())
+        self.runtime = Runtime(None, temp.name)
+        self.addCleanup(self.runtime.close)
+        self.runtime.service = self.service
+        self.runtime.host = RuntimeHost()
+        child = types.ModuleType("agent.delegation_context")
+        child.is_delegated_child_context = lambda: False
+        life = types.ModuleType("agent.subagent_lifecycle")
+        life.get_active_subagent_parent = lambda: None
+        life.__getattr__ = lambda name: object  # PEP 562: any lifecycle class the lazy imports ask for
+        constants = types.ModuleType("hermes_constants")
+        constants.get_hermes_home = lambda: Path(temp.name)
+        nothing = lambda home: contextlib.nullcontext()
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        # Only the stubbed names are swapped: patch.dict would also drop lazily imported hermes_muse modules and detach later patches.
+        for name, module in {"agent.delegation_context": child, "agent.subagent_lifecycle": life, "hermes_constants": constants}.items():
+            self.stub(name, module)
+        stack.enter_context(patch("hermes_muse.runtime.profile_scope", side_effect=nothing))
+        stack.enter_context(patch("hermes_muse.mutations.profile_scope", side_effect=nothing))
+        stack.enter_context(patch("hermes_muse.runtime.session_info", return_value={"chat_type": "private", "cron": False}))
+        stack.enter_context(patch("logging.Logger.warning"))
+
+    def stub(self, name, module):
+        previous = sys.modules.get(name)
+        sys.modules[name] = module
+        self.addCleanup(lambda: sys.modules.pop(name, None) if previous is None else sys.modules.__setitem__(name, previous))
+
+    def call(self, action, data=None, **top):
+        args = {"action": action, **top}
+        if data is not None:
+            args["data"] = data
+        return json.loads(self.runtime.handle(args, session_id="session-a"))
+
+    def failure(self, action, data=None, **top):
+        reply = self.call(action, data, **top)
+        self.assertFalse(reply["ok"], reply)
+        self.assertNotRegex(reply["error"], LEAK)
+        return reply
+
+    def check_source(self, **extra):
+        return {"source": SOURCE, "scope": "unread mail", "started_at": self.now.isoformat(), "status": "checked", "summary": "ok",
+                "expected_resources": ["mail:inbox"], "checked_resources": ["mail:inbox"], **extra}
+
+
+class ReportedFailures(Harness):
+    """The real proactive-watch failures, one by one."""
+
+    def test_query_window_text_on_a_mail_source(self):
+        reply = self.failure("source_check", self.check_source(query_window="last 24h", request_id="r", expected_revision="absent"))
+        self.assertEqual((reply["code"], reply["retryable"], reply["field"]), ("invalid_argument", False, "data.query_window"))
+        for phrase in ("data.query_window", "data.scope", "delete data.query_window", "Got text 'last 24h'", "fail again"):
+            self.assertIn(phrase, reply["error"])
+        self.assertIn("example", reply)
+
+    def test_query_window_text_on_a_calendar_source(self):
+        source = {**SOURCE, "resource": "calendars:rolling-30d"}
+        reply = self.failure("source_check", self.check_source(source=source, query_window=json.dumps({"mode": "rolling"}), observed_at="2026-10-12T12:00:00-04:00",
+                                                               request_id="r", expected_revision="absent"))
+        self.assertIn("JSON object (not JSON text)", reply["error"])
+        self.assertIn("calendar_window", reply["error"])
+
+    def test_account_and_connection_beside_source(self):
+        reply = self.failure("source_check", {"account": "default", "connection": "mail-cli", "scope": "s"})
+        self.assertIn("move data.account, data.connection into data.source", reply["error"])
+        self.assertIn('"resource"', reply["error"])
+        self.assertIn("alias_reason", reply["error"])  # the allowed list
+        self.assertEqual(reply["fields"], ["data.account", "data.connection"])
+
+    def test_calendar_window_missing_or_incomplete(self):
+        missing = self.failure("calendar_view", {})
+        self.assertIn("data.window", missing["error"])
+        self.assertIn("data.sources", missing["error"])
+        short = self.failure("calendar_view", {"window": {"mode": "rolling"}, "sources": []})
+        self.assertIn("data.window is missing keys timezone, observed_at, start, end, source_resource", short["error"])
+        self.assertIn("calendar_window", short["error"])
+        self.assertNotEqual(short["error"], "'window'")
+
+    def test_calendar_window_edited_text_and_unchanged_rule(self):
+        window = self.call("calendar_window")["result"]
+        edited = self.failure("calendar_view", {"window": {**window, "end": "2026-10-13T12:00:00-04:00"}, "sources": []})
+        self.assertIn("differs from the calendar_window result in: end", edited["error"])
+        self.assertIn("unchanged", edited["error"])
+        encoded = self.failure("calendar_view", {"window": json.dumps(window), "sources": []})
+        self.assertIn("data.window has the wrong type", encoded["error"])
+        self.assertIn("not JSON-encoded text", encoded["error"])
+
+    def test_calendar_source_entries_are_checked_with_indexed_paths(self):
+        window = self.call("calendar_window")["result"]
+        text = self.failure("calendar_view", {"window": window, "sources": ["calendar"]})
+        self.assertIn("data.sources[0] must be an object", text["error"])
+        no_inventory = self.failure("calendar_view", {"window": window, "sources": [{"source": {**SOURCE, "resource": window["source_resource"]}, "title": "t"}]})
+        self.assertIn("data.sources[0].inventory", no_inventory["error"])
+        wrong_resource = self.failure("calendar_view", {"window": window, "sources": [{"source": SOURCE, "title": "t", "inventory": {"pages": []}}]})
+        self.assertIn(window["source_resource"], wrong_resource["error"])
+
+    def test_delegate_task_field(self):
+        reply = self.failure("delegate", {"task": "summarise"})
+        self.assertIn("data.task", reply["error"])
+        self.assertIn("data.goal", reply["error"])
+        self.assertIn("data.tasks", reply["error"])
+        self.assertIn("goal_id", reply["error"])
+
+    def test_revision_conflict_says_how_to_recover(self):
+        data = self.check_source(request_id="first", expected_revision="absent")
+        first = self.call("source_check", data)
+        self.assertTrue(first["ok"], first)
+        stale = self.failure("source_check", {**data, "request_id": "second"})
+        self.assertEqual((stale["code"], stale["retryable"]), ("revision_conflict", True))
+        for phrase in ("data.expected_revision 'absent' is stale", "context(section=source_check)", "NEW data.request_id", stale["current_revision"]):
+            self.assertIn(phrase, stale["error"])
+        missing = self.failure("source_check", {k: v for k, v in {**data, "request_id": "third"}.items() if k != "expected_revision"})
+        self.assertEqual((missing["code"], missing["retryable"]), ("revision_required", True))
+        self.assertIn("data.expected_revision=", missing["error"])
+        number = self.failure("source_check", {**data, "request_id": "fourth", "expected_revision": 3})
+        self.assertIn("not a number", number["error"])
+
+    def test_source_id_and_window_service_errors_name_their_field(self):
+        reply = self.failure("source_check", self.check_source(source_id="source-other", request_id="r", expected_revision="absent"))
+        self.assertIn("data.source_id must identify the same account and resource", reply["error"])
+        self.assertIn("delete data.source_id", reply["error"])
+        window = self.service.calendar_window({})
+        with self.assertRaises(DomainError) as caught:
+            self.service.calendar_view({"window": {**window, "start": "2026-10-01T00:00:00-04:00"}, "sources": []})
+        self.assertIn("unchanged", str(caught.exception))
+        self.assertEqual(caught.exception.details["field"], "data.window")
+
+    def test_no_request_id_names_the_field(self):
+        reply = self.failure("source_check", self.check_source())
+        self.assertIn("request_id required for source_check (data.request_id)", reply["error"])
+        self.assertEqual(reply["field"], "data.request_id")
+
+
+class Boundary(Harness):
+    def test_top_level_arguments_and_unknown_action(self):
+        moved = self.failure("context", None, section="notice")
+        self.assertIn("move section inside `data`", moved["error"])
+        near = self.failure("source_chek", {})
+        self.assertIn("source_check", near["error"])
+        encoded = self.failure("context", '{"section": "notice"}')
+        self.assertIn("data must be an object", encoded["error"])
+        self.assertIn("never JSON-encode", encoded["error"])
+
+    def test_misplaced_fields_get_their_destination(self):
+        self.assertIn("rename to data.expected_revision", self.failure("preferences", {"revision": "x", "signal_id": "s", "request_id": "r"})["error"])
+        self.assertIn("is not accepted by goal_create", self.failure("goal_create", {"request_id": "r"})["error"])
+        self.assertIn("did you mean source_check_ids", self.failure("review_complete", {"source_check_id": "x"})["error"])
+        self.assertIn("data.section", self.failure("context", {"kind": "notice"})["error"])
+
+    def test_unexpected_interpreter_exceptions_are_converted(self):
+        cases = (
+            (KeyError("window"), "calendar_view", {}, "data.window"),
+            (KeyError("started_at"), "source_check", {}, "data.started_at"),
+            (KeyError("mystery"), "source_check", {}, "mystery"),
+            (AttributeError("'str' object has no attribute 'get'"), "source_check", {}, "wrong type"),
+            (TypeError("string indices must be integers"), "goal_update", {}, "goal_update"),
+            (IndexError("list index out of range"), "feed_add", {}, "feed_add"),
+            (ZoneInfoNotFoundError("No time zone found with key Mars/Base"), "calendar_view", {}, "IANA timezone"),
+        )
+        for exc, action, data, expected in cases:
+            with self.subTest(exc=repr(exc)):
+                reply = json.loads(Runtime._error(exc, action, data))
+                self.assertEqual((reply["ok"], reply["code"], reply["retryable"]), (False, "invalid_argument", False))
+                self.assertIn(expected, reply["error"])
+                self.assertIn(action, reply["error"])
+                self.assertIn("fail again", reply["error"])
+                self.assertNotRegex(reply["error"], LEAK)
+
+    def test_text_value_errors_name_the_field(self):
+        blank = json.loads(Runtime._error(ValueError("Expected nonempty text, at most 200 characters"), "goal_create", {"title": " "}))
+        self.assertIn("data.title must be non-empty text", blank["error"])
+        ident = json.loads(Runtime._error(ValueError("ID must be 1–80 letters, numbers, hyphens or underscores"), "goal_update", {"id": "a b"}))
+        self.assertIn("data.id", ident["error"])
+        stamp = json.loads(Runtime._error(ValueError("Timestamps must include a timezone"), "notification_add", {}))
+        self.assertIn("ISO-8601", stamp["error"])
+        other = json.loads(Runtime._error(ValueError("Goal already exists; use goal_update"), "goal_create", {}))
+        self.assertIn("Goal already exists; use goal_update", other["error"])
+        self.assertIn("fail again", other["error"])
+
+    def test_retryable_is_accurate_and_native_result_survives(self):
+        for code, retry in (("revision_conflict", True), ("cursor_expired", True), ("invalid_argument", False), ("permission_denied", False),
+                            ("size_limit", False), ("outcome_unknown", False)):
+            reply = json.loads(Runtime._error(DomainError(code, "Something specific"), "context", {}))
+            self.assertEqual(reply["retryable"], retry, code)
+            if code in {"invalid_argument", "permission_denied", "size_limit"}:
+                self.assertIn("fail again", reply["error"])
+        self.assertNotIn("fail again", json.loads(Runtime._error(DomainError("outcome_unknown", "Inspect first"), "context", {}))["error"])
+        error = ValueError("Native delegation returned an error")
+        error.native_result = {"error": "boom"}
+        self.assertEqual(json.loads(Runtime._error(error, "delegate", {}))["native"], {"error": "boom"})
+
+    def test_sizes_and_ranges_name_limits(self):
+        long = self.failure("goal_create", {"title": "x" * 201, "description": "d", "completion_criteria": "c"})
+        self.assertEqual(long["code"], "size_limit")
+        self.assertIn("data.title is too long", long["error"])
+        self.assertIn("at most 200 characters", long["error"])
+        self.assertIn("201 characters", long["error"])
+        many = self.failure("research_start", {"items": ["q"] * 25})
+        self.assertIn("data.items", many["error"])
+        bad_item = self.failure("research_start", {"items": [{"q": 1}]})
+        self.assertIn("data.items[0]", bad_item["error"])
+        hour = self.failure("preferences", {"start_hour": 99, "signal_id": "s", "request_id": "r", "expected_revision": "absent"})
+        self.assertNotRegex(hour["error"], LEAK)
+
+    def test_every_enum_names_its_values(self):
+        reply = self.failure("run_complete", {"outcome": "done", "summary": "s"})
+        self.assertIn("one of complete, partial", reply["error"])
+        reply = self.failure("source_check", self.check_source(status="ok", request_id="r", expected_revision="absent"))
+        self.assertIn("checked, partial, error, unavailable", reply["error"])
+        reply = self.failure("feedback", {"kind": "notification", "id": "n", "action": "close", "signal_id": "s", "request_id": "r", "expected_revision": "x"})
+        self.assertIn("dismiss", reply["error"])
+
+    def test_timestamps_and_ids(self):
+        reply = self.failure("notification_add", {"event_key": "k", "message": "m", "rationale": "r", "sources": ["s"], "verified_at": "yesterday",
+                                                  "expires": 1, "request_id": "r", "expected_revision": "absent"})
+        self.assertIn("data.verified_at", reply["error"])
+        self.assertIn("UTC offset", reply["error"])
+        reply = self.failure("goal_update", {"id": "bad id!"})
+        self.assertIn("data.id is not a valid record id", reply["error"])
+
+
+class AllActions(Harness):
+    def invalid(self, action, data):
+        with self.assertRaises(DomainError) as caught:
+            validate(action, data)
+        error = caught.exception
+        self.assertNotRegex(str(error), LEAK)
+        self.assertIn(action, str(error))
+        self.assertIn("Fix:", str(error))
+        self.assertIn("field", error.details)
+        return error
+
+    def test_unsupported_field_on_every_action(self):
+        for action in FIELDS:
+            with self.subTest(action=action):
+                error = self.invalid(action, {"bogus_field": 1})
+                self.assertIn("data.bogus_field", str(error))
+                self.assertIn("fail again", str(error))
+                if FIELDS[action]:
+                    self.assertIn(FIELDS[action].split()[0], error.details["expected"])
+                self.assertEqual(error.code, "invalid_argument")
+                self.assertIs(error.details["retryable"], False)
+
+    def test_wrong_type_for_every_typed_field(self):
+        for action, fields in FIELDS.items():
+            for name in fields.split():
+                kind = field_kind(action, name)
+                if kind is None or name == "query_window":
+                    continue
+                with self.subTest(action=action, field=name):
+                    error = self.invalid(action, {name: WRONG[kind]})
+                    self.assertIn("data." + name, str(error))
+                    self.assertIn("Expected", str(error))
+                    self.assertIn("Got", str(error))
+
+    def test_missing_required_fields_are_all_named_at_once(self):
+        for action, required in REQUIRED.items():
+            with self.subTest(action=action):
+                error = self.invalid(action, {})
+                self.assertEqual(error.code, "invalid_argument")
+                names = [n for n in required if not (action == "source_check" and n == "source")] if action != "source_check" else ["source"]
+                for name in names:
+                    self.assertIn("data." + name, str(error))
+
+    def test_previously_valid_shapes_still_pass(self):
+        for action, data in (
+            ("notification_review", {"id": "n", "conversation_revisions": ["ignored"], "request_id": "r", "expected_revision": "x"}),
+            ("review_complete", {"job": "watch-abc123", "summary": "s", "goal_id": "g", "stop_condition": "c", "source_check_ids": ["s"]}),
+            ("content_write", {"kind": "note", "id": "people", "body": "", "expected_revision": "absent", "request_id": "r"}),
+            ("goal_create", {"title": "t", "description": "d", "completion_criteria": "c", "deadline": None, "signal_id": "s"}),
+            ("goal_update", {"id": "g", "expected_revision": 3, "status": "done", "note": "told the user", "waiting_user": False}),
+            ("notification_prepare", {"id": "abc123"}),
+            ("feedback", {"kind": "interest", "id": "i", "action": "snooze", "until": 1800000000, "signal_id": "s", "request_id": "r", "expected_revision": "x"}),
+            ("context", {}), ("status", {"section": "notice", "limit": 25}), ("calendar_window", {"mode": "month"}),
+            ("forget", {"kind": "content", "object_kind": "note", "id": "x", "expected_revision": "r", "request_id": "q", "signal_id": "s"}),
+        ):
+            with self.subTest(action=action):
+                validate(action, data)
+
+    def test_data_must_be_an_object_for_every_action(self):
+        for action in FIELDS:
+            with self.subTest(action=action):
+                self.assertIn("data must be an object", str(self.invalid(action, "{}")))
+
+    def test_garbage_values_never_leak_interpreter_text(self):
+        values = ("x", 7, [], {}, None, True, ["x"], {"a": 1})
+        for action, fields in FIELDS.items():
+            for name in ["_none_"] + fields.split():
+                for value in values:
+                    data = {} if name == "_none_" else {name: value}
+                    with self.subTest(action=action, field=name, value=value):
+                        reply = self.call(action, data)
+                        self.assertIsInstance(reply["ok"], bool)
+                        if not reply["ok"]:
+                            self.assertNotRegex(reply["error"], LEAK)
+                            self.assertIn("retryable", reply)
+
+    def test_nested_garbage_in_calendar_and_source_check(self):
+        window = self.call("calendar_window")["result"]
+        resource = window["source_resource"]
+        good = {"source": {**SOURCE, "resource": resource}, "title": "t", "inventory": {"pages": [{"status": "checked", "observed_at": window["observed_at"], "items": []}]}}
+        for sources in ([{**good, "inventory": "x"}], [{**good, "calendars": "x"}], [{**good, "calendars": ["x"]}], [{**good, "inventory": {"pages": "x"}}],
+                        [{**good, "inventory": {"pages": ["x"]}}], [{**good, "inventory": {"pages": [{"items": 5, "observed_at": 5}]}}],
+                        [{**good, "source": {"connection": 1, "account": 2, "resource": resource}}], [{**good, "source": "x"}], [None], [[]]):
+            with self.subTest(sources=json.dumps(sources)[:60]):
+                reply = self.call("calendar_view", {"window": window, "sources": sources})
+                text = reply["error"] if not reply["ok"] else json.dumps(reply["result"]["gaps"])
+                self.assertNotRegex(text, LEAK)
+        for number, query in enumerate(("x", 5, [], {}, {"mode": "rolling"}, {**window, "timezone": "Mars/Base"}, {**window, "observed_at": "nope"})):
+            with self.subTest(query=json.dumps(query)[:40]):
+                data = self.check_source(source={**SOURCE, "resource": resource}, query_window=query, observed_at=window["observed_at"], request_id=f"q{number}", expected_revision="absent")
+                reply = self.call("source_check", data)
+                self.assertFalse(reply["ok"])
+                self.assertNotRegex(reply["error"], LEAK)
+                self.assertIn("data.query_window", reply["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()
