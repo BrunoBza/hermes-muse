@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.6
+# Hermes Muse 0.3.7
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
@@ -294,7 +294,7 @@ Muse 工人一律通过公开 ctx.dispatch_tool 调用原生 delegate_task，尊
 
 同一个发行包提供 Dashboard/Desktop 页面与纯读 API，保留完整 Feed、主题、点子和目标，浏览不跑模型、不记录阅读进度。Desktop 仅向选定真实原聊天填入草稿，由用户发送后按正常工具授权执行。页面跟随宿主主题，Feed 与目标正文按安全 Markdown 渲染（不解析原始 HTML），未完成目标在上、已完成/已取消折叠在下；点子为空时会说明原因（只有每晚复盘或对话新增后才会出现）。目标接口支持 `status=open|closed`。
 
-所有 Muse 正文使用 content_read/content_write 与对象 ID，不要求模型知道私有路径，也不增加 Docker 的 Muse 挂载。目标使用可选整数 expected_revision；其他受管修改使用对象版本和稳定 request_id；冲突先回读，未知结果先核原执行。原生 memory、SOUL、skills 与 connector 不迁移。40 个动作及字段见 [INTERFACE](docs/INTERFACE.md)。
+所有 Muse 正文使用 content_read/content_write 与对象 ID，不要求模型知道私有路径，也不增加 Docker 的 Muse 挂载。目标使用可选整数 expected_revision；其他受管修改使用对象版本和每次运行唯一的 request_id（动作加本轮开始时间到分钟，不能只用日期；冲突时 suggested_request_id 给出可用的新 key）；冲突先回读，未知结果先核原执行。原生 memory、SOUL、skills 与 connector 不迁移。40 个动作及字段见 [INTERFACE](docs/INTERFACE.md)。
 
 有计划停用时，启用状态下调用 installation_prepare 保存逐任务续点并暂停经安装身份核验的任务，然后通过宿主原生入口停用/移除。普通卸载回调不暗中暂停任务。确认记忆时区分已保存、待批、提交未确认、失败、重复和未知；批准完成事件、provider 持久化证明、后台通知合并与所有直接停用路径清扫仍按公开宿主契约降级。
 

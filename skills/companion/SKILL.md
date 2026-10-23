@@ -1,7 +1,7 @@
 ---
 name: companion
 description: Goals, proactive reminders, calendar views, memory upkeep, Feed and research in the current Hermes profile.
-version: 0.3.6
+version: 0.3.7
 ---
 # Companion
 

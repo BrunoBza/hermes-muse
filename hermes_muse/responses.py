@@ -4,7 +4,7 @@ import json
 
 from .content_io import DomainError
 
-from .guidance import SAME_AGAIN as SAME_REQUEST
+from .guidance import SAME_AGAIN as SAME_REQUEST, fresh_key
 
 LIMIT = 256 * 1024
 ARCHIVE = ContextVar('muse_response_archive', default=None)
@@ -83,9 +83,11 @@ def invoke_once(runtime, args, kwargs, callback):
         old = store.read('mutation_request', key)
         if old:
             if old['signature'] != signature:
+                suggestion = fresh_key(data['request_id'])
                 raise DomainError('idempotency_conflict', f"{action}: data.request_id {data['request_id'][:60]!r} was already used with different arguments or from another session. "
-                                  "Fix: send changed arguments under a NEW data.request_id; reuse it only to replay the identical call. " + SAME_REQUEST,
-                                  field='data.request_id', hint='use a new request_id for changed arguments')
+                                  f"Fix: resend under a NEW data.request_id such as {suggestion!r}; keys must be unique per run, so do not reuse one from an earlier run or the same day. "
+                                  "Reuse it only to replay the identical call. " + SAME_REQUEST,
+                                  field='data.request_id', hint=f'use a new request_id for changed arguments, e.g. {suggestion!r}', suggested_request_id=suggestion)
             if old.get('result') is None:
                 raise DomainError('outcome_unknown', f"{action}: the original call with this data.request_id is pending or was interrupted, so its outcome is unknown. "
                                   "Fix: inspect native evidence/the saved result before acting; do not redispatch with another key.",

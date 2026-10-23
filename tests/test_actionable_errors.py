@@ -185,6 +185,65 @@ class ReportedFailures(Harness):
         self.assertEqual(reply["field"], "data.request_id")
 
 
+class RequestIdPerRun(Harness):
+    """Reported 2026-10-23: a patrol keyed source_check by task-date-source; its second run of the day collided with the first."""
+    def first_run(self):
+        data = self.check_source(request_id="proactive-watch-20261023-mail", expected_revision="absent")
+        self.assertTrue(self.call("source_check", data)["ok"])
+
+    def test_second_run_of_the_day_with_a_date_key_conflicts_but_names_a_usable_key(self):
+        self.first_run()
+        reply = self.failure("source_check", self.check_source(request_id="proactive-watch-20261023-mail", expected_revision="absent",
+                                                              summary="second run, different result"))
+        self.assertEqual((reply["code"], reply["retryable"]), ("idempotency_conflict", False))
+        suggestion = reply["suggested_request_id"]
+        self.assertRegex(suggestion, r"^proactive-watch-20261023-mail-\d{8}T\d{6}[0-9a-f]{4}$")
+        for phrase in (repr(suggestion), "unique per run", "same day"):
+            self.assertIn(phrase, reply["error"])
+        self.assertLessEqual(len(suggestion), 128)
+
+    def test_suggested_key_is_accepted_after_the_revision_is_refreshed(self):
+        self.first_run()
+        args = self.check_source(request_id="proactive-watch-20261023-mail", expected_revision="absent", summary="second run")
+        suggestion = self.failure("source_check", args)["suggested_request_id"]
+        # The key is the only thing the conflict blames; the model then follows the stale-revision advice.
+        stale = self.failure("source_check", {**args, "request_id": suggestion})
+        self.assertEqual(stale["code"], "revision_conflict")
+        self.assertIn("unique to this run", stale["error"])
+        done = self.call("source_check", {**args, "request_id": suggestion, "expected_revision": stale["current_revision"]})
+        self.assertTrue(done["ok"], done)
+
+    def test_long_keys_still_fit_the_suggestion(self):
+        key = "k" * 128
+        args = self.check_source(request_id=key, expected_revision="absent")
+        self.assertTrue(self.call("source_check", args)["ok"])
+        reply = self.failure("source_check", {**args, "summary": "changed"})
+        self.assertLessEqual(len(reply["suggested_request_id"]), 128)
+
+    def test_missing_request_id_does_not_teach_a_date_only_key(self):
+        reply = self.failure("source_check", self.check_source())
+        self.assertNotRegex(reply["error"], r"-20\d{6}-[a-z]")
+        self.assertIn("start time to the minute", reply["error"])
+        self.assertIn("never reuse a key from an earlier run", reply["error"])
+
+    def test_documentation_and_examples_use_run_unique_keys(self):
+        root = Path(__file__).resolve().parents[1]
+        date_key = re.compile(r"request_id[^\n]{0,40}?[\"'`][\w-]*-20\d{6}-\w", re.I)
+        for path in [*(root / "skills").rglob("*.md"), *(root / "prompts").glob("*.md"), root / "README.md", root / "docs/INTERFACE.md"]:
+            self.assertIsNone(date_key.search(path.read_text(encoding="utf-8")), path)
+        for example in (json.dumps(value) for value in __import__("hermes_muse.guidance", fromlist=["EXAMPLES"]).EXAMPLES.values()):
+            self.assertNotIn("<new unique key>", example)
+        context = (root / "skills/companion/references/context.md").read_text(encoding="utf-8")
+        self.assertIn("unique to every run", context)
+
+    def test_calendar_view_text_entry_hint_points_at_the_json_mistake(self):
+        window = self.service.calendar_window({})
+        reply = self.failure("calendar_view", {"window": window, "discovery_complete": True, "sources": ["stray text, no such field"]})
+        self.assertEqual(reply["field"], "data.sources[0]")
+        self.assertIn("unbalanced brace", reply["error"])
+        self.assertIn("make each entry an object", reply["hint"])
+
+
 class Boundary(Harness):
     def test_top_level_arguments_and_unknown_action(self):
         moved = self.failure("context", None, section="notice")

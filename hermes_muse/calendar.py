@@ -180,7 +180,7 @@ def assemble(data, now):
         at = f"data.sources[{number}]"
         if not isinstance(source, dict):
             raise fail("calendar_view", at, "must be an object", expected="{source:{connection,account,resource}, title, inventory:{pages:[...]}, calendars:[...]}",
-                       got=source, fix="make each entry an object; do not JSON-encode it into text")
+                       got=source, fix="make each entry an object; do not JSON-encode it into text. A text entry usually means stray text or an unbalanced brace/quote inside the sources array: rebuild the array and check it is valid JSON")
         if source.get("receipt_format") == "apple-pim":
             from .apple_calendar import adapt
             source = adapt(source)

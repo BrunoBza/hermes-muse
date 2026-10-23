@@ -9,12 +9,21 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import secrets
+import time
 
 from .content_io import DomainError
 
 NOTHING = object()
 SAME_AGAIN = "Resending the same arguments will fail again; change them as described first."
+KEY_RULE = ("A request_id must be unique to this run: include this run's start time to the minute (e.g. \"{action}-20261023T1205-mail-inbox\"). "
+            "A date alone is not enough, because later runs the same day send different arguments; never reuse a key from an earlier run.")
 SOURCE = {"connection": "mail-cli", "account": "default", "resource": "mail:inbox"}
+
+def fresh_key(old):
+    """A ready, unused replacement for a key whose arguments changed: the old key plus the current time and a short random tail."""
+    return f"{old[:100]}-{time.strftime('%Y%m%dT%H%M%S')}{secrets.token_hex(2)}"
+
 
 # Minimal correct calls for the actions models get wrong most. Illustrative values only.
 EXAMPLES = {
@@ -24,12 +33,12 @@ EXAMPLES = {
                     "description": "Compare candidates within budget", "completion_criteria": "User confirms a purchase"}},
     "goal_update": {"action": "goal_update", "data": {"id": "<goal id>", "progress": "Shortlisted two models"}},
     "notification_add": {"action": "notification_add", "data": {
-        "request_id": "notification_add-<new unique key>", "expected_revision": "absent", "event_key": "<stable key for this event>",
+        "request_id": "notification_add-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "absent", "event_key": "<stable key for this event>",
         "message": "<what to tell the user>", "rationale": "<why it matters now>", "sources": ["<original item reference>"],
         "verified_at": "2026-01-01T09:00:00+00:00", "expires": "2026-01-02T09:00:00+00:00"}},
-    "feed_add": {"action": "feed_add", "data": {"request_id": "feed_add-<new unique key>", "expected_revision": "absent",
+    "feed_add": {"action": "feed_add", "data": {"request_id": "feed_add-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "absent",
                  "event_key": "<stable key>", "title": "<title>", "content": "<article text>", "sources": ["<url or reference>"], "why": "<why relevant>"}},
-    "watch_create": {"action": "watch_create", "data": {"request_id": "watch_create-<new unique key>", "expected_revision": "absent",
+    "watch_create": {"action": "watch_create", "data": {"request_id": "watch_create-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "absent",
                      "goal_id": "<active goal id>", "signal_id": "<signal id>", "schedule": "every 30m",
                      "prompt": "<what to check>", "stop_condition": "<when to stop>"}},
     "calendar_window": {"action": "calendar_window", "data": {"mode": "rolling"}},
@@ -38,14 +47,14 @@ EXAMPLES = {
                       "inventory": {"pages": [{"status": "checked", "observed_at": "<ISO time>", "items": [{"id": "cal-1", "title": "Work", "timezone": "UTC"}]}]},
                       "calendars": [{"resource_id": "cal-1", "window": "<same window object>", "pages": [{"status": "checked", "observed_at": "<ISO time>", "items": []}]}]}]}},
     "source_check": {"action": "source_check", "data": {
-        "request_id": "source_check-<new unique key>", "expected_revision": "<revision from context(section=source_check) or \"absent\">",
+        "request_id": "source_check-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "<revision from context(section=source_check) or \"absent\">",
         "source": SOURCE, "scope": "unread mail from the last 24 hours", "started_at": "2026-01-01T09:00:00+00:00",
         "status": "checked", "expected_resources": ["mail:inbox"], "checked_resources": ["mail:inbox"], "summary": "Read 12 messages; 2 relevant"}},
     "review_complete": {"action": "review_complete", "data": {"job": "feed-pulse", "up_to": "2026-01-01T09:00:00+00:00", "summary": "Reviewed new signals"}},
     "run_complete": {"action": "run_complete", "data": {"outcome": "partial", "summary": "Checked mail", "gaps": ["Calendar unreachable; retry next run"]}},
     "delegate": {"action": "delegate", "data": {"goal": "<one self-contained task>", "context": "<facts the worker needs>"}},
     "research_start": {"action": "research_start", "data": {"items": ["<question 1>", "<question 2>"]}},
-    "feedback": {"action": "feedback", "data": {"request_id": "feedback-<new unique key>", "expected_revision": "<revision>",
+    "feedback": {"action": "feedback", "data": {"request_id": "feedback-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "<revision>",
                  "kind": "notification", "id": "<notice id>", "action": "dismiss", "signal_id": "<signal id>"}},
 }
 

@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.6
+# Hermes Muse 0.3.7
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
@@ -312,7 +312,7 @@ Recent conversation context uses bounded previews with complete revision-checked
 
 Muse includes Dashboard and Desktop pages for the complete Feed, topics, ideas and goals. APIs are authenticated by Hermes and check the requested profile on every GET. Browsing creates no read state or model work. Desktop changes start as a draft in a selected originating chat; the user sends it through normal tool authorization. Install the same package on the Desktop device to obtain its entry; a remote backend install alone does not install the client entry. The pages follow the host theme, render Feed and goal text as safe Markdown (no raw HTML), list open goals first with closed ones folded, and explain an empty Ideas tab (Ideas appear only when the nightly review or a conversation adds one). The goals API accepts `status=open|closed`.
 
-Use `muse_manage` for every Muse business object, locally or from a container. No new Muse bind mount is needed. `skill_view` provides instructions; it does not perform storage. See [all 40 actions](docs/INTERFACE.md) and [content usage](skills/companion/references/content.md). Goals use an optional integer expected_revision. For other managed mutations, read the object revision and supply expected_revision and a stable request_id. Conflict means reread/merge. Unknown outcome means inspect the original operation, never repeat it with a new key.
+Use `muse_manage` for every Muse business object, locally or from a container. No new Muse bind mount is needed. `skill_view` provides instructions; it does not perform storage. See [all 40 actions](docs/INTERFACE.md) and [content usage](skills/companion/references/content.md). Goals use an optional integer expected_revision. For other managed mutations, read the object revision and supply expected_revision and a stable request_id. Conflict means reread/merge. Unknown outcome means inspect the original operation, never repeat it with a new key. A request_id must be unique to each run (action plus run start time to the minute, not the date alone); an idempotency_conflict error returns `suggested_request_id`.
 
 Before planned disable/removal, call installation_prepare with the original user signal, current installation revision and request key while the plugin remains enabled. The user signal must be a whole-message imperative naming Muse and matching the operation, such as “Please disable Muse now.” / “请停用Muse插件” or “Please uninstall Muse now.” / “请卸载Muse插件”. Questions, quotes, unrelated deletion and deferred/conditional requests are refused. It pauses only verified owned jobs and returns requires_host_action; then use Hermes native disable/remove. Direct disable makes remaining launchers harmless but cannot promise automatic task cleanup. Data and user-paused jobs remain preserved.
 

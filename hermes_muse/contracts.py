@@ -3,7 +3,7 @@
 import re
 
 from .content_io import DomainError
-from .guidance import (EXAMPLES, ENUMS, IDENTIFIER_ACTIONS, KIND_WORDS, NOTHING, REQUIRED, REQUIRED_FIX, SAME_AGAIN, allowed_fields, fail, field_kind,
+from .guidance import (EXAMPLES, ENUMS, IDENTIFIER_ACTIONS, KIND_WORDS, NOTHING, REQUIRED, KEY_RULE, REQUIRED_FIX, SAME_AGAIN, allowed_fields, fail, field_kind,
                        unknown_action, unsupported)
 from .store import epoch
 
@@ -228,8 +228,8 @@ def validate(action, data):
         ):
             raise DomainError(
                 "invalid_argument",
-                f"{action}: request_id required for {action} (data.request_id): a new 1..128-character key per logical write "
-                f"(e.g. \"{action}-20261017-mail-icloud\"); reuse it only to replay the identical call."
+                f"{action}: request_id required for {action} (data.request_id): a new 1..128-character key per logical write. "
+                + KEY_RULE.format(action=action) + " Reuse a key only to replay the identical call."
                 + (" This action also needs data.expected_revision: the revision string from the object's context list row "
                    "or content_read, or \"absent\" for a new object." if action in CAS else "")
                 + " " + SAME_AGAIN,

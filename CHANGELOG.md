@@ -1,3 +1,11 @@
+# 0.3.7 — request_id is unique per run (2026-10-23)
+
+- Cause: the `request_id required` error and the docs showed a date-only key (`source_check-20261017-mail-icloud`). A job that runs many times a day copied the pattern, so its second run reused a key with different arguments and failed with `idempotency_conflict` until the tool-loop guard stopped it. Idempotency itself is unchanged.
+- The missing-`request_id` error, the `source_check`/`feedback`/`feed_add`/`notification_add`/`watch_create` examples, the companion references, the README/INTERFACE and every background prompt now say a key must be unique to each run (action plus run start time to the minute plus a label) and must not be reused from an earlier run or the same day.
+- `idempotency_conflict` (CAS actions and replayable actions) returns `suggested_request_id`: the old key plus the current time and a random tail, unused and within 128 characters, and the message tells the model to resend the same arguments under it. `revision_conflict` asks for a run-unique new key.
+- `calendar_view`: a text entry in `data.sources` now also says it usually means stray text or an unbalanced brace in the array.
+- Considered and not done: generating a `request_id` when it is missing. `source_check` replay and interrupted-call recovery depend on the caller-held key, so an invented key would silently drop that guarantee and change a documented contract; `expected_revision` is untouched.
+
 # 0.3.6 — actionable argument errors (2026-10-23)
 
 - Every `muse_manage` argument failure now names the action and field path (`data.query_window`), the expected type/format/values, what was received (type and clipped value) and the exact repair; common ones add `field`, `expected`, `received`, `hint` and a minimal `example`. All missing required fields and all unsupported fields are reported at once. Misplaced fields get their destination (`account`/`connection`/`resource` into `data.source`, `task` on `delegate` into `goal`/`tasks`, `revision` into `expected_revision`); other unsupported fields list the allowed ones.

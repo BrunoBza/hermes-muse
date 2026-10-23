@@ -1,8 +1,10 @@
-# Muse 0.3.6 interface
+# Muse 0.3.7 interface
 
 Single tool: `muse_manage(action,data)`. Profile/home come from Hermes, never caller parameters.
 Goals need no request ID or caller scope token. Optional goal expected_revision is one integer; conflicts return current goal.
 Content page revisions and non-goal mutation journals retain their existing bounded/concurrent-read contracts.
+
+`request_id` is unique to each run: action plus run start time to the minute plus object or source label, never the date alone. The same key with different arguments returns `idempotency_conflict` with `suggested_request_id`, an unused replacement.
 
 | Action | Fields | Write/version contract |
 |---|---|---|

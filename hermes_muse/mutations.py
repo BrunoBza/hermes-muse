@@ -3,7 +3,7 @@
 import json
 from .request_context import CURRENT_REQUEST
 from .contracts import CAS, CREATES, validate
-from .guidance import SAME_AGAIN
+from .guidance import SAME_AGAIN, fresh_key
 from .content_io import DomainError, revision, check_cancelled
 from .views import Views, canonical
 from .host import file_lock, profile_scope
@@ -133,11 +133,13 @@ def invoke(runtime, args, kwargs, callback):
         old = runtime.store.read("mutation_request", journal)
         if old:
             if old["signature"] != signature:
+                suggestion = fresh_key(data["request_id"])
                 raise DomainError(
                     "idempotency_conflict",
                     f"{action}: data.request_id {data['request_id'][:60]!r} was already used with different arguments. "
-                    "Fix: send changed arguments under a NEW data.request_id; reuse a request_id only to replay the identical call. " + SAME_AGAIN,
-                    field="data.request_id", hint="use a new request_id for changed arguments",
+                    f"Fix: resend these arguments under a NEW data.request_id such as {suggestion!r}; keys must be unique per run, so do not reuse "
+                    "one from an earlier run or the same day. Reuse a request_id only to replay the identical call. " + SAME_AGAIN,
+                    field="data.request_id", hint=f"use a new request_id for changed arguments, e.g. {suggestion!r}", suggested_request_id=suggestion,
                 )
             if old.get("result") is not None:
                 raw = runtime._receipt(old["result"], action=action, data=data)
@@ -229,7 +231,7 @@ def invoke(runtime, args, kwargs, callback):
                     "revision_conflict",
                     f"{action}: data.expected_revision {data['expected_revision'][:80]!r} is stale; the object changed (current_revision {actual!r}). "
                     f"Fix: reread it ({reread}), merge your change into the current content, then resend with a NEW data.request_id "
-                    f"and data.expected_revision={actual!r}. Do not reuse the old request_id.",
+                    f"(unique to this run: add the current time) and data.expected_revision={actual!r}. Do not reuse the old request_id.",
                     field="data.expected_revision", hint=f"reread, merge, resend with new request_id and expected_revision={actual!r}",
                     current_revision=actual, **identity,
                 )
