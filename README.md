@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.10
+# Hermes Muse 0.3.11
 
 [简体中文](README.zh-CN.md) · [Design](docs/DESIGN.md) · [Acceptance guide](docs/ACCEPTANCE.md)
 
@@ -254,7 +254,7 @@ Private/local user inputs retain their first 8,000 characters, truncation flag, 
 
 Receiving the result runs an assistant turn on that profile's model. Hermes can create the Bot Chat on first delivery if it does not exist; its native queue handles a busy chat. Feed writing and routine upkeep stay silent. Selected reminders and scheduled weekly/monthly reports enter this delivery flow.
 
-The official installer displays the plugin's after-install notes, but has no plugin-defined channel/session picker. This version uses Bot Chat by default and does not require an external channel such as Telegram.
+The official installer displays the plugin's after-install notes, but has no plugin-defined channel/session picker. This version uses Bot Chat by default and does not require an external channel such as Telegram. When a gateway home channel exists (`/sethome`), new goal watches deliver to `all` instead; the optional `deliver` preference (`all`, `bot-chat` or one platform) overrides that for jobs created afterwards, including the fixed jobs on first load.
 
 Talk about plans, interests and feedback normally. Patrols do not require you to create a goal first. For example:
 

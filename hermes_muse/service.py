@@ -65,9 +65,10 @@ class Companion:
             if not isinstance(prefs["blocked_topics"], list) or any(not isinstance(x, str) for x in prefs["blocked_topics"]):
                 raise fail("preferences", "data.blocked_topics", "must be an array of topic strings", got=prefs["blocked_topics"],
                            fix='send data.blocked_topics as e.g. ["sports", "crypto"]')
-            if prefs["deliver"] is not None and (not isinstance(prefs["deliver"], str) or not prefs["deliver"].strip()):
-                raise fail("preferences", "data.deliver", "must be a non-empty destination string or null", expected='null (automatic), "all", "bot-chat" or a platform name such as "telegram"',
-                           got=prefs["deliver"], fix='send data.deliver as one of those strings, or null to restore automatic selection')
+            # One destination only: a comma list that includes bot-chat would skip Muse's Bot Chat envelope and receipt tracking.
+            if prefs["deliver"] is not None and (not isinstance(prefs["deliver"], str) or not prefs["deliver"].strip() or "," in prefs["deliver"]):
+                raise fail("preferences", "data.deliver", "must be one destination string or null", expected='null (automatic), "all", "bot-chat" or one platform such as "telegram"',
+                           got=prefs["deliver"], fix='send data.deliver as one of those strings (no comma lists), or null to restore automatic selection')
             if not isinstance(prefs["feed_brief"], str) or len(prefs["feed_brief"]) > 12000:
                 raise fail("preferences", "data.feed_brief", "must be text of at most 12000 characters", got=prefs["feed_brief"], fix="send a shorter plain-text brief")
             path = self.store.path("PROACTIVE_PREFERENCES.md")

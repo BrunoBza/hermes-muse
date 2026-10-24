@@ -105,13 +105,16 @@ class HermesHost:
             self.save_manifest(record)
             return job
 
-    def default_deliver(self):
+    def default_deliver(self, detect_home=True):
         """Determine default delivery destination for proactive and governance jobs.
 
         Precedence:
         1. Explicit 'deliver' configured in PROACTIVE_PREFERENCES.md.
         2. 'all' if a gateway home channel is configured via /sethome.
         3. Fallback to 'bot-chat' for local/desktop environments.
+
+        detect_home=False skips step 2. Plugin load must not ask Hermes for home channels: that lookup
+        resolves gateway platform plugins, which wait on the plugin load already in progress (load timeout).
         """
         try:
             prefs_path = self.store.path("PROACTIVE_PREFERENCES.md")
@@ -125,6 +128,8 @@ class HermesHost:
                         return deliver.strip()
         except Exception:
             pass
+        if not detect_home:
+            return "bot-chat"
         try:
             from cron.scheduler_delivery import _iter_home_target_platforms, _get_home_target_chat_id
             if any(_get_home_target_chat_id(p) for p in _iter_home_target_platforms()):
@@ -163,7 +168,7 @@ class HermesHost:
                 self.store.write_text(relative, content, create_only=True)
             for folder in ("memory/people", "memory/groups", "dreams/alignment/derived", "workspace/goals", "workspace/your_files/feed"):
                 self.store.path(folder).mkdir(parents=True, exist_ok=True)
-        default_destination = self.default_deliver()
+        default_destination = self.default_deliver(detect_home=False)
         for key, schedule in JOBS.items():
             prompt = (self.root / "prompts" / f"{key}.md").read_text(encoding="utf-8")
             self._owned_job(key, {"name": "muse-" + key, "schedule": schedule,

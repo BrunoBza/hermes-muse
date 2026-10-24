@@ -1,3 +1,14 @@
+# 0.3.11 — delivery follows /sethome; configurable destination (2026-10-24)
+
+Merges community PR #1 (feat(delivery): support dynamic /sethome delivery and configurable destination). Co-authored with BrunoBza — thank you for the contribution; the original commit and authorship are kept in the merge history.
+
+- New goal watches pick their destination through `default_deliver()`: the `deliver` preference if set, else `all` when a gateway home channel exists (`/sethome`), else `bot-chat`. With no home channel (desktop-only profiles) behaviour is unchanged.
+- Fixed jobs (governance reports, proactive-watch) use the `deliver` preference or `bot-chat` when first created. The PR as submitted also looked up home channels while the plugin loads; on a gateway with platform plugins that lookup waits on the load already in progress, so Hermes abandoned the plugin after 10 s (`load timed out`; `native_smoke.py` reproduced it, 0.3.10 passes). Plugin load no longer queries home channels.
+- New optional `deliver` preference in `PROACTIVE_PREFERENCES.md`: `all`, `bot-chat` or one platform such as `telegram`; `null` restores automatic selection. It applies to jobs created afterwards; existing jobs keep the destination they have. It is accepted by `muse_manage preferences` (added to the action contract).
+- Repairable error for `data.deliver` in the same style as the other preference errors (`invalid_argument`, field, expected, received, fix). Comma lists are rejected: a list containing `bot-chat` would skip the Bot Chat envelope and receipt tracking.
+- Notification flow checked for `all`/platform destinations: the notice is bound, rendered as plain text without the Bot Chat envelope, and reconciled through the native delivery queue (`delivered`→sent, `queued`→transport_queued/sent). An unresolved `all` target (home channel removed) ends as unknown and is never replayed.
+- Tests: the PR's four tests no longer need a Hermes install or a fixed `/tmp` path; added flow, null-reset, load-time and contract tests.
+
 # 0.3.10 — source_check fills started_at; stray top-level arguments get a usable error (2026-10-24)
 
 Cause: from 2026-10-23 the half-hourly patrol failed whole rounds on weaker models. The commonest error was `source_check` without `data.started_at` (1-12 times per round), repeated verbatim until the tool-loop guard stopped the run; the other was arguments such as `section` or `body` placed beside `action`, which the host rejected with a bare `additionalProperties` message before Muse ran.
