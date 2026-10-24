@@ -20,7 +20,7 @@ ACTIONS = ("content_read", "content_write", "memory_feedback_review", "installat
            "preferences", "notification_add", "notification_refresh", "notification_queue", "notification_handoff", "notification_prepare", "feed_add", "feed_list",
            "feed_update", "calendar_window", "calendar_view", "source_check", "notification_resolve", "notification_review", "review_complete", "run_complete", "watch_create", "watch_stop", "delegate", "research_start", "research_status", "operations_read", "operations_complete", "operations_batch", "operations_evidence", "operations_commit", "finding_record", "forget")
 SCHEMA = {"name": "muse_manage", "description": "Assemble calendar views, manage companion goals, temporary interests, reminders, Feed and background research and inspect native operations/findings. First read hermes-muse:companion for action-specific data fields. Every argument goes inside data, never beside action: {'action':'context','data':{'section':'notice','limit':25}}. Parent context/status without data return a bounded section directory listing valid sections. section=signals with job freezes a review window; read its bodies before checkpointing. child context/status are pure paginated projections. Children may read current-profile content/history/audit evidence but cannot change state or checkpoints. Read result content_ref or error_ref through content_read pages. Writes to non-goal objects need request_id (new key per logical write) and expected_revision (revision string from the object's context list row or content_read; 'absent' for a new object); errors return current_revision. Optional request_id on external/checkpoint calls preserves replay; outcome_unknown never permits redispatch. Goals use active/done/cancelled; after telling the user, goal_update(status=done,note=...). Optional expected_revision is one integer; no request_id or scope token is needed for goals. Read due goals and owner status with context(section=followups). Never invent a signal ID, delivery receipt or authorization.",
-          "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"], "additionalProperties": False}}
+          "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": list(ACTIONS)}, "data": {"type": "object", "description": "Action arguments documented by the companion Skill; omit for context/status section discovery; use returned section/cursor/window arguments."}}, "required": ["action"]}}
 
 
 def session_info():
@@ -276,6 +276,8 @@ class Runtime:
                               if action == "research_start" else poll(self.store, self.ctx, data))
                 elif action in {"notification_prepare", "notification_queue", "notification_handoff"}:
                     result = self.service.notification_queue(data, delivery if delivery and delivery.get("kind") != "report" else None)
+                elif action == "source_check":
+                    result = self.service.source_check(data, run=run)
                 else:
                     if action == "notification_add" and not data.get("session_id"):
                         data = dict(data)

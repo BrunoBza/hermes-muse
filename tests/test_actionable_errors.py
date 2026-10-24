@@ -536,3 +536,97 @@ class NightlyIdeasStep(Harness):
         self.assertIn("takes no kind", reply["hint"])
         self.assertEqual(reply["example"]["data"]["title"], "<short headline>")
         self.assertIn("rename it to data.rationale", self.failure("idea_add", {"title": "t", "reason": "r"})["hint"])
+
+
+class StartedAtDefault(Harness):
+    """Reported 2026-10-24: weaker models sent source_check without data.started_at and repeated the rejection until the run was halted."""
+    RUN_START = datetime(2026, 10, 12, 11, 30, tzinfo=ZoneInfo("America/New_York")).timestamp()
+
+    def minimal(self, request_id="sa-1", revision="absent", **extra):
+        data = self.check_source(request_id=request_id, expected_revision=revision, **extra)
+        data.pop("started_at", None)
+        return {**data, **{k: v for k, v in extra.items() if k == "started_at"}}
+
+    def in_cron_run(self, data, start=None, execution="exec-1"):
+        run = {"id": execution, "job_id": "job-1", "job": "proactive-watch", "started": start or self.RUN_START, "status": "running", "stages": {}}
+        with patch.object(self.service.runs, "bind", return_value=run), patch.object(self.service.operations, "track"):
+            return json.loads(self.runtime.handle({"action": "source_check", "data": data}, session_id="session-a", task_id=f"cron:job-1:{execution}"))
+
+    def test_missing_started_at_defaults_to_the_call_time(self):
+        reply = self.call("source_check", self.minimal())
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["result"]["started_at"], self.now.timestamp())
+        self.assertIn("time of this call", reply["result"]["started_at_defaulted"])
+        self.assertNotIn("started_at_defaulted", self.service.store.read("source_check", reply["result"]["id"]))
+
+    def test_missing_started_at_defaults_to_the_cron_run_start(self):
+        reply = self.in_cron_run(self.minimal())
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["result"]["started_at"], self.RUN_START)
+        self.assertIn("start time of this Cron run", reply["result"]["started_at_defaulted"])
+
+    def test_an_explicit_started_at_wins_and_is_not_flagged(self):
+        explicit = self.RUN_START + 60
+        reply = self.in_cron_run(self.minimal(started_at=explicit))
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["result"]["started_at"], explicit)
+        self.assertNotIn("started_at_defaulted", reply["result"])
+
+    def test_a_future_started_at_is_still_rejected(self):
+        reply = self.failure("source_check", self.minimal(started_at=self.now.timestamp() + 3600))
+        self.assertEqual(reply["field"], "data.started_at")
+        self.assertIn("past or current", reply["error"])
+
+    def test_an_earlier_started_at_keeps_the_stored_check_and_an_equal_one_is_accepted(self):
+        first = self.call("source_check", self.minimal(started_at=self.now.timestamp()))
+        earlier = self.call("source_check", self.minimal("sa-2", first["revision"], started_at=self.now.timestamp() - 600, summary="older"))
+        self.assertTrue(earlier["ok"], earlier)
+        self.assertEqual((earlier["result"]["started_at"], earlier["result"]["summary"]), (self.now.timestamp(), "ok"))
+        equal = self.call("source_check", self.minimal("sa-3", first["revision"], started_at=self.now.timestamp(), summary="same instant"))
+        self.assertTrue(equal["ok"], equal)
+        self.assertEqual(equal["result"]["summary"], "same instant")
+
+    def test_a_second_defaulted_check_in_the_same_run_is_accepted(self):
+        first = self.in_cron_run(self.minimal())
+        again = self.in_cron_run(self.minimal("sa-2", first["revision"], summary="second pass"))
+        self.assertTrue(again["ok"], again)
+        self.assertEqual((again["result"]["started_at"], again["result"]["summary"]), (self.RUN_START, "second pass"))
+
+    def test_the_next_run_defaults_to_its_own_later_start(self):
+        first = self.in_cron_run(self.minimal())
+        self.service.clock = lambda: self.now.timestamp() + 1800
+        later = self.in_cron_run(self.minimal("sa-2", first["revision"], summary="next run"), start=self.RUN_START + 1800, execution="exec-2")
+        self.assertEqual((later["result"]["started_at"], later["result"]["summary"]), (self.RUN_START + 1800, "next run"))
+
+    def test_replaying_a_defaulted_call_later_is_a_replay_not_a_conflict(self):
+        first = self.call("source_check", self.minimal())
+        self.service.clock = lambda: self.now.timestamp() + 90
+        replay = self.call("source_check", self.minimal())
+        self.assertTrue(replay["ok"], replay)
+        self.assertEqual(replay["result"]["started_at"], first["result"]["started_at"])
+
+
+class StrayTopLevelArguments(Harness):
+    """Reported 2026-10-24: `section`, `body`, `kind`, `id`... were sent beside `action`; the host rejected them with a bare additionalProperties error."""
+
+    def test_the_tool_schema_leaves_the_message_to_the_handler(self):
+        from hermes_muse.runtime import SCHEMA
+        self.assertNotIn("additionalProperties", SCHEMA["parameters"])
+
+    def test_section_beside_context_is_moved_into_data(self):
+        reply = self.failure("context", None, section="notice", limit=25)
+        self.assertEqual((reply["code"], reply["retryable"]), ("invalid_argument", False))
+        self.assertIn('move limit, section inside `data`, e.g. {"action": "context", "data": {"limit": 25, "section": "notice"}}', reply["error"])
+        self.assertIn("fail again", reply["error"])
+
+    def test_content_write_fields_beside_action_are_moved_into_data(self):
+        reply = self.failure("content_write", {"kind": "goal"}, id="g1", body="text", request_id="r1", expected_revision="absent")
+        for name in ("body", "expected_revision", "id", "request_id"):
+            self.assertIn(name, reply["field"])
+        self.assertIn('"kind": "goal"', reply["error"])
+        self.assertIn('"body": "text"', reply["error"])
+
+    def test_an_unknown_action_with_stray_fields_names_the_valid_ones(self):
+        reply = self.failure("search", None, section="session_search")
+        self.assertIn("is not a muse_manage action", reply["error"])
+        self.assertIn("put every argument inside `data`", reply["error"])

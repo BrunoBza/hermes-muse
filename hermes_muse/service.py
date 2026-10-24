@@ -505,14 +505,18 @@ class Companion:
         reason = (alias or {}).get("reason") or bounded(data.get("alias_reason"), 1000)
         return target, canonical["source"], (key, {"target": target, "source": source, "reason": reason})
 
-    def source_check(self, data):
-        """Stable source identity and coverage, using the same target as tool CAS."""
+    def source_check(self, data, run=None):
+        """Stable source identity and coverage, using the same target as tool CAS.
+
+        A missing started_at defaults to the bound Cron run's start, else to this call's time; an explicit value always wins.
+        """
         with self.store.transaction() as db:
             key, source, binding = self.source_identity(data, db)
-            started = epoch(data["started_at"])
             now = self.clock()
+            given = data.get("started_at")
+            started = epoch(given) if given is not None else min(run["started"], now) if run else now
             if not 0 < started <= now:
-                raise fail("source_check", "data.started_at", "must be a past or current timestamp", got=data["started_at"],
+                raise fail("source_check", "data.started_at", "must be a past or current timestamp", got=given,
                            fix="set data.started_at to when this check began (epoch seconds or ISO-8601 with offset), not a future time")
             status = data["status"]
             if status not in {"checked", "partial", "error", "unavailable"}:
@@ -547,7 +551,7 @@ class Companion:
                 observed = epoch(data["observed_at"])
                 if started != epoch(data["query_window"]["observed_at"]) or not started <= observed <= now:
                     raise fail("source_check", "data.started_at / data.observed_at", "do not match the calendar query",
-                               expected="started_at equal to query_window.observed_at, and observed_at between it and now", got=data["started_at"],
+                               expected="started_at equal to query_window.observed_at, and observed_at between it and now", got=given,
                                fix="delete data.started_at and data.observed_at (Muse fills them from query_window), or copy them unchanged from the calendar_view coverage[].source_check")
                 observation = {"query_window": canonical_window(data["query_window"]), "observed_at": observed}
             if binding:
@@ -560,7 +564,7 @@ class Companion:
             old = self.store.get(db, "source_check", key, {})
             if (started < old.get("started_at", 0) or
                     observation and started == old.get("started_at") and observation["observed_at"] < old.get("observed_at", 0)):
-                return old
+                return self.defaulted(old, given, run)
             row = {**old, "id": key, "source": source, "scope": scope, "started_at": started,
                    "finished_at": now, "status": status, "summary": summary, **coverage, **observation}
             row["missing_resources"] = sorted(set(expected) - set(checked))
@@ -570,7 +574,15 @@ class Companion:
                 if observation:
                     row.update(last_success_window=observation["query_window"], last_success_observed_at=observation["observed_at"])
             self.store.put(db, "source_check", key, row)
-        return row
+        return self.defaulted(row, given, run)
+
+    @staticmethod
+    def defaulted(row, given, run):
+        """Tell the caller (not the stored row) that started_at was filled in."""
+        if given is not None:
+            return row
+        used = "the start time of this Cron run" if run else "the time of this call"
+        return {**row, "started_at_defaulted": f"data.started_at was not sent, so Muse used {used}; send data.started_at only if the check began at a different time"}
 
     def notification_resolve(self, data):
         """Retire an unsent notice after verifying that its source no longer warrants it."""

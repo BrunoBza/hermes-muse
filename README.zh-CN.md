@@ -1,4 +1,4 @@
-# Hermes Muse 0.3.9
+# Hermes Muse 0.3.10
 
 [English](README.md) · [设计文档](docs/DESIGN.md) · [验收清单](docs/ACCEPTANCE.md)
 
@@ -316,7 +316,7 @@ context/status改为有界目录，按section/cursor读集合；长信号使用�
 
 每个动作先校验整个请求（512 KiB、嵌套层数和控制标记），再记录、绑定或派发；响应上限 256 KiB。已提交的大结果以 `result_is_reference/content_ref` 返回，用 `content_read` 分页读全后再解析；大的原生错误仍是 `ok:false`，带有限的原因和 `error_ref`。`kind=tool_result` 是原工具响应的只读副本，仅限发起它的私聊会话按 ID 读取，不授权任何副作用，也不证明原生任务已完成。
 
-参数错误以“可照着改”为目标：每个 `ok:false` 都会写明 action 和字段路径（如 `data.query_window`）、期望的类型/格式/可选值、实际收到的内容（类型和截断后的值）以及具体改法（例如“把 data.account、data.connection 移到 data.source”或“这不是日历来源：删除 data.query_window，把时间范围写进 data.scope”）；常见错误还带 `field`、`expected`、`received`、`hint` 和最小 `example`。放错位置的字段会指出正确位置，其他不支持的字段会列出该 action 允许的字段。解释器异常（`KeyError`、`TypeError`、`AttributeError`）不会返回给调用方：统一入口把它们转成带 action、字段和 schema 提示的 `invalid_argument`。`retryable` 只在按提示修正后重发可能成功时为 true（revision_conflict、revision_required、cursor_expired、source_unavailable）；其余校验错误都会说明原样重发仍会失败。错误码和成功结果不变。
+参数错误以“可照着改”为目标：每个 `ok:false` 都会写明 action 和字段路径（如 `data.query_window`）、期望的类型/格式/可选值、实际收到的内容（类型和截断后的值）以及具体改法（例如“把 data.account、data.connection 移到 data.source”或“这不是日历来源：删除 data.query_window，把时间范围写进 data.scope”）；常见错误还带 `field`、`expected`、`received`、`hint` 和最小 `example`。放错位置的字段会指出正确位置，其他不支持的字段会列出该 action 允许的字段。解释器异常（`KeyError`、`TypeError`、`AttributeError`）不会返回给调用方：统一入口把它们转成带 action、字段和 schema 提示的 `invalid_argument`。`retryable` 只在按提示修正后重发可能成功时为 true（revision_conflict、revision_required、cursor_expired、source_unavailable）；其余校验错误都会说明原样重发仍会失败。`source_check` 可省略 `started_at`（默认取 Cron 运行开始时间，否则取调用时刻，并在结果里说明）；放在 `action`/`data` 旁边的参数会得到改好的调用示例。错误码和成功结果不变。
 
 `delegate`、`research_start`、`watch_stop`、`operations_*`、`review_complete`、`run_complete`、`notification_*` 等动作可带 `request_id`（1..128 字符）：参数相同的重复调用返回原回执，参数不同则拒绝；执行中断时返回 `outcome_unknown`，不会重复执行，须先核对原生证据，不能换新键重派。
 

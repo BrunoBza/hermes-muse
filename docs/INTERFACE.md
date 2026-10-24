@@ -1,4 +1,4 @@
-# Muse 0.3.9 interface
+# Muse 0.3.10 interface
 
 Single tool: `muse_manage(action,data)`. Profile/home come from Hermes, never caller parameters.
 Goals need no request ID or caller scope token. Optional goal expected_revision is one integer; conflicts return current goal.
@@ -35,7 +35,7 @@ Content page revisions and non-goal mutation journals retain their existing boun
 | `feed_update` | `id signal_id feedback position delete title content sources expected_revision request_id` | Required revision + request ID |
 | `calendar_window` | `mode` | Action-specific fields or pure read |
 | `calendar_view` | `window sources discovery_complete` | Action-specific fields or pure read |
-| `source_check` | `source started_at status scope summary expected_resources checked_resources cursor query_window observed_at source_id alias_reason expected_revision request_id` | Required revision + request ID |
+| `source_check` | `source started_at? status scope summary expected_resources checked_resources cursor query_window observed_at source_id alias_reason expected_revision request_id` | Required revision + request ID |
 | `operations_read` | `through request_id` | Optional replay request ID |
 | `operations_batch` | `request_id` | Optional replay request ID |
 | `operations_evidence` | `receipt ref offset length limit session_id job_id since until` | Action-specific fields or pure read |
@@ -55,4 +55,4 @@ Request budget512 KiB, final response256 KiB. Follow real cursors; oversized com
 Notification review, quiet hours, actual transport receipts and unknown-write no-resend behavior remain unchanged.
 Offline migration/rollback: `python -m hermes_muse.migration --home <profile-home> [--rollback]`; back up and stop writers.
 
-Errors: `{ok:false, error, code, retryable, ...}`. `error` is self-contained: action, field path (`data.source.account`), expected type/format/values, what arrived and the repair. Optional extra fields: `field`, `fields`, `expected`, `received`, `hint`, `example` (a minimal correct call), plus `current_revision`/`read` on revision errors. Misplaced fields (for example `account`/`connection` beside `source`, `task` on `delegate`, `revision` instead of `expected_revision`) are answered with their destination; other unsupported fields list the action's allowed fields. Python exceptions never surface: `KeyError`/`TypeError`/`AttributeError` become `invalid_argument` naming the action and field. `retryable:true` only for `revision_conflict`, `revision_required`, `cursor_expired`, `source_unavailable`; other non-retryable errors state that an unchanged resend fails again. Codes and successful results are unchanged.
+Errors: `{ok:false, error, code, retryable, ...}`. `error` is self-contained: action, field path (`data.source.account`), expected type/format/values, what arrived and the repair. Optional extra fields: `field`, `fields`, `expected`, `received`, `hint`, `example` (a minimal correct call), plus `current_revision`/`read` on revision errors. Arguments beside `action`/`data` are answered with the corrected call (the tool schema does not reject extra top-level properties, so this message reaches the model). `source_check` may omit `started_at`: Muse uses the bound Cron run's start (the call time outside a run) and adds `started_at_defaulted` to the result; an explicit value wins and is validated as before. Misplaced fields (for example `account`/`connection` beside `source`, `task` on `delegate`, `revision` instead of `expected_revision`) are answered with their destination; other unsupported fields list the action's allowed fields. Python exceptions never surface: `KeyError`/`TypeError`/`AttributeError` become `invalid_argument` naming the action and field. `retryable:true` only for `revision_conflict`, `revision_required`, `cursor_expired`, `source_unavailable`; other non-retryable errors state that an unchanged resend fails again. Codes and successful results are unchanged.

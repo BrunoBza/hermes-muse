@@ -51,7 +51,7 @@ EXAMPLES = {
                       "calendars": [{"resource_id": "cal-1", "window": "<same window object>", "pages": [{"status": "checked", "observed_at": "<ISO time>", "items": []}]}]}]}},
     "source_check": {"action": "source_check", "data": {
         "request_id": "source_check-<run start YYYYMMDDTHHMM>-<label>", "expected_revision": "<revision from context(section=source_check) or \"absent\">",
-        "source": SOURCE, "scope": "unread mail from the last 24 hours", "started_at": "2026-01-01T09:00:00+00:00",
+        "source": SOURCE, "scope": "unread mail from the last 24 hours",
         "status": "checked", "expected_resources": ["mail:inbox"], "checked_resources": ["mail:inbox"], "summary": "Read 12 messages; 2 relevant"}},
     "review_complete": {"action": "review_complete", "data": {"job": "feed-pulse", "up_to": "2026-01-01T09:00:00+00:00", "summary": "Reviewed new signals"}},
     "run_complete": {"action": "run_complete", "data": {"outcome": "partial", "summary": "Checked mail", "gaps": ["Calendar unreachable; retry next run"]}},
@@ -145,7 +145,7 @@ REQUIRED = {
     "feed_add": {"event_key": "text"},
     "feed_update": {"id": "text", "signal_id": "text"},
     "calendar_view": {"window": "object", "sources": "list"},
-    "source_check": {"source": "object", "started_at": "time", "status": "text", "scope": "text", "summary": "text"},
+    "source_check": {"source": "object", "status": "text", "scope": "text", "summary": "text"},
     "review_complete": {"job": "text", "up_to": "time", "summary": "text"},
     "run_complete": {"outcome": "text", "summary": "text"},
     "research_start": {"items": "list"},
@@ -307,7 +307,15 @@ def bad_envelope(args):
     extra = sorted(set(args) - {"action", "data"})
     action = args.get("action") if args.get("action") in FIELDS else "muse_manage"
     moved = [k for k in extra if action != "muse_manage" and k in allowed_fields(action)]
-    fix = ("move " + ", ".join(moved) + " inside `data`: " if moved else "put every argument inside `data`: ") + '{"action": "<name>", "data": {<fields>}}'
+    if moved:
+        nested = args["data"] if isinstance(args.get("data"), dict) else {}
+        call = json.dumps({"action": action, "data": {**nested, **{k: args[k] for k in moved}}}, ensure_ascii=False, default=str)
+        fix = f"move {', '.join(moved)} inside `data`, e.g. {call[:300]}"
+    else:
+        fix = 'put every argument inside `data`: {"action": "<name>", "data": {<fields>}}'
+    if action == "muse_manage" and isinstance(args.get("action"), str):
+        near = difflib.get_close_matches(args["action"], FIELDS, n=3)
+        fix += f"; `action` {args['action']!r} is not a muse_manage action (" + ("did you mean " + " / ".join(near) if near else "choose one of: " + ", ".join(FIELDS)) + ")"
     return fail(action, ", ".join(extra[:8]), "is not allowed beside action/data", expected="only `action` and `data` at the top level",
                 got={k: args[k] for k in extra[:3]}, fix=fix)
 

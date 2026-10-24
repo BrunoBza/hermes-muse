@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 PLUGIN = "hermes-muse"
 DAY = 86400
 GOVERNANCE_JOBS = ("weekly-governance-review", "monthly-system-audit")
