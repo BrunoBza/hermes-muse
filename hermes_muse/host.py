@@ -105,6 +105,34 @@ class HermesHost:
             self.save_manifest(record)
             return job
 
+    def default_deliver(self):
+        """Determine default delivery destination for proactive and governance jobs.
+
+        Precedence:
+        1. Explicit 'deliver' configured in PROACTIVE_PREFERENCES.md.
+        2. 'all' if a gateway home channel is configured via /sethome.
+        3. Fallback to 'bot-chat' for local/desktop environments.
+        """
+        try:
+            prefs_path = self.store.path("PROACTIVE_PREFERENCES.md")
+            if prefs_path.is_file():
+                line = prefs_path.read_text(encoding="utf-8").splitlines()[0]
+                prefix = "<!-- hermes-muse "
+                if line.startswith(prefix) and line.endswith(" -->"):
+                    data = json.loads(line[len(prefix):-4])
+                    deliver = data.get("deliver")
+                    if deliver and isinstance(deliver, str) and deliver.strip():
+                        return deliver.strip()
+        except Exception:
+            pass
+        try:
+            from cron.scheduler_delivery import _iter_home_target_platforms, _get_home_target_chat_id
+            if any(_get_home_target_chat_id(p) for p in _iter_home_target_platforms()):
+                return "all"
+        except Exception:
+            pass
+        return "bot-chat"
+
     def initialize(self):
         from hermes_cli.plugins import PluginContext
         if not callable(getattr(PluginContext, "register_system_prompt_section", None)):
@@ -135,11 +163,12 @@ class HermesHost:
                 self.store.write_text(relative, content, create_only=True)
             for folder in ("memory/people", "memory/groups", "dreams/alignment/derived", "workspace/goals", "workspace/your_files/feed"):
                 self.store.path(folder).mkdir(parents=True, exist_ok=True)
+        default_destination = self.default_deliver()
         for key, schedule in JOBS.items():
             prompt = (self.root / "prompts" / f"{key}.md").read_text(encoding="utf-8")
             self._owned_job(key, {"name": "muse-" + key, "schedule": schedule,
                                   "prompt": prompt, "skills": [f"{PLUGIN}:companion"],
-                                  "deliver": "bot-chat" if key in (*GOVERNANCE_JOBS, "proactive-watch") else "local",
+                                  "deliver": default_destination if key in (*GOVERNANCE_JOBS, "proactive-watch") else "local",
                                   "attach_to_session": False}, fixed=True)
         # Upgrade the old silent patrol once; later user destination changes are preserved.
         from cron.jobs import get_job, update_job
@@ -232,7 +261,7 @@ class HermesHost:
                   "this job delivers that response. With nothing approved return [SILENT].\n"
                   + prompt_text + "\nStop condition: " + stop)
         job = self._owned_job(key, {"name": "muse-" + key, "schedule": data.get("schedule", "every 30m"), "prompt": prompt,
-                                   "skills": [f"{PLUGIN}:companion"], "deliver": "bot-chat"}, owner=goal["id"], expires=expires)
+                                   "skills": [f"{PLUGIN}:companion"], "deliver": self.default_deliver()}, owner=goal["id"], expires=expires)
         with file_lock(self.store.path("install.lock")):
             manifest = self.manifest()
             manifest["jobs"][job["id"]]["stop_condition"] = stop
